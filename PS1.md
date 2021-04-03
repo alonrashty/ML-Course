@@ -3,6 +3,15 @@ Problem Set 1
 Alon Rashty
 04/04/2021
 
+-   [About the Course](#about-the-course)
+    -   [Question 1](#question-1)
+    -   [Question 2](#question-2)
+    -   [Question 3](#question-3)
+-   [RStudio](#rstudio)
+    -   [Question 1](#question-1-1)
+    -   [Question 2](#question-2-1)
+    -   [Question 3](#question-3-1)
+
 ### About the Course
 
 #### Question 1
@@ -38,16 +47,53 @@ library(kableExtra)
 ``` r
 iris %>%
   select(contains("Sepal") | Species) %>%
-  group_by(iris$Species) %>%
-  summarise(Average_Sepal_Length = mean(iris$Sepal.Length))
+  group_by(Species) %>%
+  summarise("Average Sepal Length" = mean(Sepal.Length)) %>%
+  kbl(caption = "Table 1", align = 'lc') %>%
+  kable_classic(full_width = F, html_font = "Cambria")
 ```
 
-    ## # A tibble: 3 x 2
-    ##   `iris$Species` Average_Sepal_Length
-    ##   <fct>                         <dbl>
-    ## 1 setosa                         5.84
-    ## 2 versicolor                     5.84
-    ## 3 virginica                      5.84
+<table class=" lightable-classic" style="font-family: Cambria; width: auto !important; margin-left: auto; margin-right: auto;">
+<caption>
+Table 1
+</caption>
+<thead>
+<tr>
+<th style="text-align:left;">
+Species
+</th>
+<th style="text-align:center;">
+Average Sepal Length
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+setosa
+</td>
+<td style="text-align:center;">
+5.006
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+versicolor
+</td>
+<td style="text-align:center;">
+5.936
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+virginica
+</td>
+<td style="text-align:center;">
+6.588
+</td>
+</tr>
+</tbody>
+</table>
 
 #### Question 3
 
@@ -56,7 +102,8 @@ mtcars %>%
   mutate(cyl = as.factor(cyl)) %>%
   ggplot(aes(x = hp, y = mpg, color = cyl)) +
     geom_point() +
-    geom_smooth(method = lm)
+    geom_smooth(method = lm)+
+    theme(text=element_text(size=16,  family="serif"))
 ```
 
 ![](PS1_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->

@@ -4,12 +4,14 @@
 title: "Problem Set 1"
 author: "Alon Rashty"
 date: "04/04/2021"
+always_allow_html: true
 output:
-        html_document:
-          toc: true
-          toc_depth: 3
-          toc_float: true
-
+  github_document:
+    toc: true
+    toc_depth: 4
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
 ---
 
 ```{r setup, include=FALSE}
@@ -36,11 +38,13 @@ library(kableExtra)
 ```
 
 #### Question 2
-```{r}
+```{r results='asis'}
 iris %>%
   select(contains("Sepal") | Species) %>%
-  group_by(iris$Species) %>%
-  summarise(Average_Sepal_Length = mean(iris$Sepal.Length))
+  group_by(Species) %>%
+  summarise("Average Sepal Length" = mean(Sepal.Length)) %>%
+  kbl(caption = "Table 1", align = 'lc') %>%
+  kable_classic(full_width = F, html_font = "Cambria")
 ```
 
 #### Question 3
@@ -49,7 +53,8 @@ mtcars %>%
   mutate(cyl = as.factor(cyl)) %>%
   ggplot(aes(x = hp, y = mpg, color = cyl)) +
     geom_point() +
-    geom_smooth(method = lm)
+    geom_smooth(method = lm)+
+    theme(text=element_text(size=16,  family="serif"))
 
 ```
 
