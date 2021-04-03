@@ -4,7 +4,11 @@
 title: "Problem Set 1"
 author: "Alon Rashty"
 date: "04/04/2021"
-output: html_document
+output:
+        html_document:
+          toc: true
+          toc_depth: 3
+          toc_float: true
 
 ---
 
@@ -25,7 +29,7 @@ We need to have (or to assume) the error is not correlated with the covariates (
 ### RStudio
 
 #### Question 1
-```{r message  = FALSE}
+```{r message=FALSE}
 library(tidyverse)
 library(kableExtra)
 
