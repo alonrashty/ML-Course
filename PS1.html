@@ -250,42 +250,39 @@ div.tocify {
 </div>
 
 
-<div id="about-the-course" class="section level3">
-<h3>About the Course</h3>
-<div id="question-1" class="section level4">
-<h4>Question 1</h4>
+<div id="about-the-course" class="section level2">
+<h2>About the Course</h2>
+<div id="question-1" class="section level3">
+<h3>Question 1</h3>
 <p>Because we need to identify the causal factor in order to apply the research results on policymaking, otherwise we could “tackle” the wrong one and not get the results we aimed for. Causal inference is not ML main goal, and instead it is interested in the best predictions.</p>
 </div>
-<div id="question-2" class="section level4">
-<h4>Question 2</h4>
+<div id="question-2" class="section level3">
+<h3>Question 2</h3>
 <p>We need to have (or to assume) the error is not correlated with the covariates (omitted variables), so we don’t have biased estimates. Also, when we analyze experiments we need to have a good enough randomization between the treatment and control groups.</p>
 </div>
-<div id="question-3" class="section level4">
-<h4>Question 3</h4>
+<div id="question-3" class="section level3">
+<h3>Question 3</h3>
 <ul>
 <li>The linearity assumption means that we are looking for the average treatment effect although it might be heterogeneous.</li>
 </ul>
 </div>
 </div>
-<div id="rstudio" class="section level3">
-<h3>RStudio</h3>
-<div id="question-1-1" class="section level4">
-<h4>Question 1</h4>
+<div id="rstudio" class="section level2">
+<h2>RStudio</h2>
+<div id="question-1-1" class="section level3">
+<h3>Question 1</h3>
 <pre class="r"><code>library(tidyverse)
 library(kableExtra)</code></pre>
 </div>
-<div id="question-2-1" class="section level4">
-<h4>Question 2</h4>
+<div id="question-2-1" class="section level3">
+<h3>Question 2</h3>
 <pre class="r"><code>iris %&gt;%
   select(contains(&quot;Sepal&quot;) | Species) %&gt;%
   group_by(Species) %&gt;%
   summarise(&quot;Average Sepal Length&quot; = mean(Sepal.Length)) %&gt;%
-  kbl(caption = &quot;Table 1&quot;, align = &#39;lc&#39;) %&gt;%
+  kbl(align = &#39;lc&#39;) %&gt;%
   kable_classic(full_width = F, html_font = &quot;Cambria&quot;)</code></pre>
 <table class=" lightable-classic" style="font-family: Cambria; width: auto !important; margin-left: auto; margin-right: auto;">
-<caption>
-Table 1
-</caption>
 <thead>
 <tr>
 <th style="text-align:left;">
@@ -324,8 +321,8 @@ virginica
 </tbody>
 </table>
 </div>
-<div id="question-3-1" class="section level4">
-<h4>Question 3</h4>
+<div id="question-3-1" class="section level3">
+<h3>Question 3</h3>
 <pre class="r"><code>mtcars %&gt;%
   mutate(cyl = as.factor(cyl)) %&gt;%
   ggplot(aes(x = hp, y = mpg, color = cyl)) +
@@ -382,7 +379,7 @@ $(document).ready(function ()  {
 
     // establish options
     var options = {
-      selectors: "h1,h2,h3,h4",
+      selectors: "h1,h2,h3",
       theme: "bootstrap3",
       context: '.toc-content',
       hashGenerator: function (text) {

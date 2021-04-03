@@ -1,0 +1,8 @@
+\contentsline {subsection}{About the Course}{1}{section*.2}%
+\contentsline {subsubsection}{Question 1}{1}{section*.3}%
+\contentsline {subsubsection}{Question 2}{1}{section*.4}%
+\contentsline {subsubsection}{Question 3}{1}{section*.5}%
+\contentsline {subsection}{RStudio}{1}{section*.6}%
+\contentsline {subsubsection}{Question 1}{1}{section*.7}%
+\contentsline {subsubsection}{Question 2}{1}{section*.8}%
+\contentsline {subsubsection}{Question 3}{2}{section*.9}%
