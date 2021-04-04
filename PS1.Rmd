@@ -6,14 +6,14 @@ author: "Alon Rashty"
 date: "04/04/2021"
 always_allow_html: true
 output:
-  pdf_document:
-    toc: yes
   html_document:
     theme: readable
     toc: yes
     toc_depth: 2
     toc_float: yes
     code_folding: show
+  pdf_document:
+    toc: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -29,7 +29,7 @@ Interpreting regressions results as causal requires a valid theoretical model: W
 
 ### Question 3
 * The linearity assumption means that we are looking for the average treatment effect although it might be heterogeneous.
-* It means that every covariate is indepdent of the others, and thus we are able to investigate the effect of each one of then separately.
+* It means that every covariate is independent of the others, and thus we are able to investigate the effect of each one of then separately.
 * Didn't understand
 
 ## The “Tidyverse”
