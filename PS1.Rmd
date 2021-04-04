@@ -6,14 +6,14 @@ author: "Alon Rashty"
 date: "04/04/2021"
 always_allow_html: true
 output:
+  pdf_document:
+    toc: yes
   html_document:
     theme: readable
     toc: yes
     toc_depth: 2
     toc_float: yes
     code_folding: show
-  pdf_document:
-    toc: yes
 ---
 
 ```{r setup, include=FALSE}
@@ -25,7 +25,7 @@ knitr::opts_chunk$set(echo = TRUE)
 Because we need to identify the causal factor in order to apply the research results on policy-making, otherwise we could "tackle" the wrong factor and not get the results we aimed for. Causal inference is not ML main goal, and instead it is interested in the best predictions.
 
 ### Question 2
-Interpretation regressions results as causal requires a valid theoretical model: We need to have (or to assume) the error is not correlated with the covariates (omitted variables), so we don't have biased estimates. Also, when we analyze experiments we need to have a good enough randomization between the treatment and control groups. 
+Interpreting regressions results as causal requires a valid theoretical model: We need to have (or to assume) the error is not correlated with the covariates (omitted variables), so we don't have biased estimates. Also, when we analyze experiments we need to have a good enough randomization between the treatment and control groups. 
 
 ### Question 3
 * The linearity assumption means that we are looking for the average treatment effect although it might be heterogeneous.
@@ -38,7 +38,6 @@ Interpretation regressions results as causal requires a valid theoretical model:
 ```{r message=FALSE}
 library(tidyverse)
 library(kableExtra)
-
 ```
 
 ### Question 2
@@ -60,7 +59,6 @@ mtcars %>%
     geom_point() +
     geom_smooth(method = lm)+
     theme(text=element_text(size=16,  family="serif"))
-
 ```
 
 ## Git & GitHub
