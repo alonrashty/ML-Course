@@ -2,9 +2,8 @@
 title: "Problem Set 1"
 author: "Alon Rashty"
 date: "04/04/2021"
-always_allow_html: true
 output:
-  html_document:
+  html_document: 
     theme: readable
     toc: yes
     toc_depth: 2
