@@ -1,0 +1,400 @@
+---
+title: "Problem Set 2: Regression & Classification"
+author: "Alon Rashty"
+date: "24/04/2021"
+output:
+  html_document: 
+    theme: readable 
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: show
+---
+
+# Packages & tables format function
+
+```{r packages, message = FALSE, warning = FALSE}
+if (!require("pacman")) install.packages("pacman")
+  pacman::p_load(
+    tidyverse,
+    tidymodels,
+    DataExplorer,
+    kableExtra,
+    ROCit,
+    glmnet,
+    broom
+    )
+
+kable_format <- function(x, digits = 2, caption = NULL,
+                         position = "center"
+                         ) {
+  kbl(x = x, digits = digits, caption = caption) %>% 
+  row_spec(row = 0,bold = TRUE) %>% 
+  kable_classic_2(lightable_options = "striped", full_width = F, 
+                  html_font = "Cambria",position = position
+                  )
+}  
+
+```
+
+***
+
+# Linear Regression
+
+## Preface
+
+#### Question 1
+
+Yes, because we don't claim for causal effects, and we are only interested in the best prediction.
+
+### Separability
+
+#### Question 1
+
+It limits the amount of variables that we can include in the regression, because we can only estimate it when $n>k$. There's a trade-off -- for every interaction we get a more specific effect, but we lose the opportunity to use other variables relating different characteristics. It also increases the variance of the model.
+
+### Normal Distribution of $E(u|X)$ {.tabset .tabset-fade .tabset-pills}
+
+#### Question 1
+
+* _Exogeneity_ ($E[u|x]=0$): It is strong because it assumes that we got every relevant information inside the model, but we often cannot observe everything, and potentially have omitted variables. For example, natural talent.
+
+* _Normality_: It is quite reasonable when we have a large sample, but less when we are dealing with smaller ones. It can also be violated when we have a strong omitted variable.
+
+* _Homoskedasticity_: It is strong because it assumes that error term is distributed equally for every value, and it is almost always false. For example, when we regress luxury expenditure on household income. We will surly get positive and significant effect, but while the low income households will have small and similar residuals, the rich's residuals will have a much larger variations, because despite their capacity they might have different tastes.
+
+#### Question 2
+Because $Var[y|x]=Var[u]$ and $Var[u]\sim N$ then $Var[y|x]\sim N$. $\beta$ is a linear combination of $y$, and thus it is also normally distributed.
+
+### {.unlisted .unnumbered}
+
+## Data {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+
+```{r wine_data, message = FALSE}
+wine <- read_csv("winequality-red.csv") %>% 
+  as_tibble()
+
+colnames(wine) <- gsub(" ", ".", colnames(wine))
+wine %>% mutate(quality = as_factor(quality)) %>% invisible()
+
+wine %>%
+  head() %>% 
+  kable_format() %>% 
+  scroll_box(width = "100%")
+
+```
+
+### Question 2
+
+```{r wine_hist}
+wine %>% plot_histogram()
+
+```
+
+### Question 3
+
+```{r wine_boxplot}
+wine %>% plot_boxplot(by = "quality")
+
+```
+
+## Model {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+```{r wine_split, message=FALSE}
+set.seed(100)
+wine_split <- wine %>% 
+  initial_split(prop = 0.7)
+wine_train <- training(wine_split)
+wine_test <- testing(wine_split)
+```
+
+### Question 2
+```{r wine_fit}
+wine_lm <- linear_reg() %>% 
+  set_engine("lm")
+
+wine_fit <- wine_lm %>% 
+  fit(quality ~ ., data = wine_train)
+
+wine_fit %>% 
+  tidy() %>%
+  kable_format()
+```
+
+### Question 3
+```{r wine_predict}
+wine_pred <- wine_fit %>% 
+  predict(new_data = wine_test) %>%
+  bind_cols(wine_test) %>% 
+  select(quality, .pred)
+
+head(round(wine_pred)) %>% 
+  kable_format()
+```
+
+### Question 4
+```{r stats}
+rmse <- wine_pred %>% 
+  rmse(quality, .pred)
+
+r2 <- wine_pred %>% 
+  rsq(quality, .pred)
+
+mae <- wine_pred %>% 
+  mae(quality, .pred)
+
+rbind(rmse, r2, mae) %>% 
+  kable_format()
+```
+
+### Question 5
+The first teaches us about the relation between a specific independent and the dependent variable, but not about the model as a whole and other effects on $y$. The opposite happens with the second, as it teaches us how the model can account for variation in $y$, but nothing about the effects of individual variables.
+
+***
+
+# Logistic Regression
+
+#### Question 1
+
+Yes, because $y$ is bernouli distributed, and $E[y|x]=Pr(y=1|x)=x'\beta$. 
+
+However, it has some drawbacks:
+
+* Conditional on $x$, the error term can only get on of 2 values:
+    * $1-\beta_0-\sum_{i=1}^p\beta_ix_i\text{ if }y=1$
+    * $-\beta_0-\sum_{i=1}^p\beta_ix_i\text{ if }y=0$
+        
+    Therefore, we cannot assume that it is normally distributed.
+    
+* It introduces heteroskedasticity.
+* It might predict some unreasonable values outside the interval $[0,1]$.
+
+## Data {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+```{r heart_data, message=FALSE}
+heart <- read.csv("heart.csv") %>% 
+  as_tibble()
+
+heart %>%
+  head() %>% 
+  kable_format() %>% 
+  scroll_box(width = "100%")
+```
+
+### Question 2
+
+```{r heart_hist}
+heart %>% plot_histogram()
+
+```
+
+## Linear Regression {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+```{r heart_split, message = FALSE}
+heart_split <- heart %>% 
+  initial_split(prop = 0.7)
+
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+
+```
+
+### Question 2
+```{r heart_fit}
+heart_lm <- linear_reg() %>% 
+  set_engine("lm")
+
+heart_fit <- heart_lm %>% 
+  fit(target ~ ., data = heart_train)
+
+heart_fit %>% 
+  tidy() %>%
+  kable_format()
+```
+
+### Question 3
+```{r heart_predict}
+heart_pred <- heart_fit %>% 
+  predict(new_data = heart_test) %>%
+  bind_cols(heart_test) %>% 
+  select(target, .pred)
+
+max(heart_pred)
+min(heart_pred)
+```
+These numbers are unreasonable because they represent probabilities that should be bounded by $[0,1]$
+
+### Question 4
+```{r roc}
+roc_pred <- rocit(score = heart_pred$.pred, class = heart_pred$target)
+plot(roc_pred)
+  
+```
+
+## Logistic Regression {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+```{r heart_log_fit}
+heart_log_fit <- glm(target ~ .,family = binomial, heart_train)
+heart_log_fit %>% 
+  tidy() %>%
+  kable_format()
+```
+
+### Question 2
+```{r heart_log_predict}
+heart_log_pred <- heart_log_fit %>% 
+  predict.glm(newdata = heart_test, type = "response") %>% 
+  as_tibble() %>% 
+  bind_cols(heart_test) %>% 
+  select(target, value) %>% 
+  rename("log_pred" = "value")
+
+max(heart_log_pred$log_pred)
+min(heart_log_pred$log_pred)
+```
+There is no problem.
+
+### Question 3
+```{r log_roc, warning = FALSE}
+class_rule <- 0.8
+heart_log_pred <- heart_log_pred %>% 
+  mutate(
+    .fitted_class = if_else(log_pred < class_rule, 0, 1),
+    .fitted_class = as_factor(.fitted_class),
+    target = as_factor(target)
+  ) 
+
+heart_conf_mat <- 
+  heart_log_pred %>% 
+  conf_mat(target, .fitted_class) 
+
+heart_conf_mat %>% 
+  summary() %>% 
+  filter(.metric %in% c("accuracy", "sens", "spec")) %>% 
+  mutate("1-.estimate" = 1 - .estimate) %>%
+  kable_format()
+  
+```
+
+***
+
+# Regularization
+
+## Ridge 
+
+#### Question 1
+
+If not, then negative penalties will offset positive ones (and vice versa), although they are both considered as penalties, regardless their sign. This treatment will necessarily lead to a lower total penalty.
+
+#### Question 2
+
+Because ridge uses the $L_2$ norm which has a circular shape.
+
+## Data {.tabset .tabset-fade .tabset-pills}
+
+### Question 1
+```{r ridge_fit}
+heart_mat <- heart_train %>% 
+  as.matrix()
+
+Y_heart <- heart_mat[, "target"]
+X_heart <- heart_mat[, names(heart) != "target"]
+
+fit_ridge <- glmnet(
+  x = X_heart,
+  y = Y_heart,
+  alpha = 0
+)
+plot(fit_ridge, xvar = "lambda")
+
+```
+
+### Question 2
+
+```{r ridge_cv}
+cv_ridge <- cv.glmnet(
+  x = X_heart, 
+  y = Y_heart,
+  alpha = 0
+)
+plot(cv_ridge)
+
+```
+
+### Question 3
+```{r ridge_coef, warning = FALSE, results = 'hold'}
+coef(cv_ridge, s = "lambda.min") %>% 
+  tidy() %>% 
+  as_tibble() %>% 
+  kable_format(position = "float_left", digits = 4, caption = "Min MSE")
+  
+coef(cv_ridge, s = "lambda.1se") %>% 
+  tidy() %>% 
+  as_tibble() %>% 
+    kable_format(position = "center", digits = 4, caption = "1se MSE")
+
+```
+The coefficients are much smaller relative to those from the logit regression, and all of them are different from zero (not sure if significance is relevant in this context).
+
+### Question 4
+
+It introduces bias because the estimation attributes some of the effect on the outcome to this variable, which is wrong.
+
+### Question 5
+```{r ridge_pred, warning = FALSE}
+heart_test_mat <- heart_test %>% 
+  as.matrix()
+
+X_heart_test <- heart_test_mat[, names(heart) != "target"]
+
+ridge_pred <- cv_ridge %>% 
+  predict(newx = X_heart_test, type = "response", s = "lambda.1se") %>% 
+  as_tibble() %>% 
+  rename("lambda.1se" = `1`)
+  
+ridge_pred <- cv_ridge %>% 
+  predict(newx = X_heart_test, type = "response", s = "lambda.min") %>% 
+  as_tibble()%>% 
+  rename("lambda.min" = `1`) %>% 
+  bind_cols(ridge_pred, select(heart_test, target))
+  
+heart_log_pred %>% 
+  select(log_pred) %>% 
+  bind_cols(ridge_pred) %>% 
+  kable_format()
+```
+
+We can see that ridge predicts unreasonable values outside the $[0,1]$ segment.
+
+### Question 6
+
+```{r conf_mat}
+class_rule <- 0.5
+
+ridge_pred <- ridge_pred %>% 
+  mutate(
+    class_min = if_else(lambda.min < class_rule, 0, 1),
+    class_min = as_factor(class_min),
+    class_1se = if_else(lambda.1se < class_rule, 0, 1),
+    class_1se = as_factor(class_1se),
+    target = as_factor(target)
+  ) %>% 
+  select(class_min, class_1se, target)
+
+ridge_pred %>% 
+  conf_mat(target, class_min) 
+
+ridge_pred %>% 
+  conf_mat(target, class_1se) 
+
+
+```
+
+
+
