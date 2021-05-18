@@ -23,11 +23,12 @@ if (!require("pacman")) install.packages("pacman")
   pacman::p_load(
     tidyverse,
     readr,
-    tidymodels,
+    yardstick,
     caret,
     DALEX,
     rpart,
     rpart.plot,
+    rattle,
     RColorBrewer,
     ada,
     doParallel,
@@ -35,7 +36,7 @@ if (!require("pacman")) install.packages("pacman")
     gbm,
     randomForest
     )
-
+library(rsample) # Loaded separately because of version update that messed up the initial split
 ```
 
 ### Question 1
@@ -76,18 +77,20 @@ rpart.plot(tree_fit, roundint = FALSE)
 
 ### Question 3
 ```{r}
-tree_fit1 <- heart_train %>% 
-  rpart(formula = formula_full,
-        method = "class", 
-        control = rpart.control(
-          minsplit = 2, 
-          minbucket = 1)
-        )
+tree_fit1 <- rpart(
+  formula = formula_full,
+  data = heart_train,
+  method = "class", 
+  control = rpart.control(
+    minsplit = 2, minbucket = 1
+    )
+  )
 
-tree_fit2 <- heart_train %>% 
-  rpart(formula = formula_full, 
-        method = "class"
-        )
+tree_fit2 <- rpart(
+  formula = formula_full, 
+  data = heart_train,
+  method = "class"
+  )
 
 ```
 
@@ -124,32 +127,32 @@ test_pred2 <- tree_pred(fit = tree_fit2, data = heart_test)
 
 __Training set__
 ```{r}
-train_pred1 %>% conf_mat(target, pred)
 train_pred1 %>% accuracy(target, pred)
 
-train_pred2 %>% conf_mat(target, pred)
 train_pred2 %>% accuracy(target, pred)
 
 ```
 
 __Test set__
 ```{r}
-test_pred1 %>% conf_mat(target, pred)
 test_pred1 %>% accuracy(target, pred)
 
-test_pred2 %>% conf_mat(target, pred)
 test_pred2 %>% accuracy(target, pred)
 
 ```
 
+The less restrictive model predicts better on the training set, but worse on the test set, probably due to over-fitting.
+
 ### Question 5
 __Preparation__
 ```{r}
-tree_fit3 <- heart_train %>% 
-  rpart(formula = formula_full,
-        method = "class", 
-        control = rpart.control(cp = 0.03)
-        )
+# tree_fit3 <- heart_train %>% 
+#   rpart(formula = formula_full,
+#         method = "class", 
+#         control = rpart.control(cp = 0.03)
+#         )
+
+tree_fit3 <- prune(tree_fit1, cp = 0.03)
 ```
 
 ```{r}
@@ -159,28 +162,27 @@ test_pred3 <- tree_pred(fit = tree_fit3, data = heart_test)
 
 __Training set__
 ```{r}
-train_pred3 %>% conf_mat(target, pred)
 train_pred3 %>% accuracy(target, pred)
 ```
 
 __Test set__
 ```{r}
-test_pred3 %>% conf_mat(target, pred)
 test_pred3 %>% accuracy(target, pred)
 ```
 
-The accuracy got worse in the training set, but better in the test set.
+The accuracy got worse in the training set, but better in the test set. This suggests the previous model has a significant over-fit.
 
 ## Fitting a Model
 ```{r}
-fitControl <- trainControl(method = "repeatedcv",
-                           number = 5,
-                           repeats = 3
-                           )
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 5,
+  repeats = 3
+  )
 ```
 
 ### Question 1
-```{r, cache=TRUE, message=FALSE, warning=FALSE, results=FALSE}
+```{r, message=FALSE, warning=FALSE, results=FALSE}
 # Train the data on each model
 for (i in c("knn", "ada", "gbm", "rf")) {
   assign(i, train(form = formula_full,
@@ -234,11 +236,6 @@ gridExtra::grid.arrange(gbm2_plot,gbm_plot, ncol = 2)
 
 ### Preparation
 ```{r, warning=FALSE, warning=FALSE, results=FALSE}
-# Adjusting data type for future use
-heart_train <- heart_train %>% 
-  mutate(target = as.numeric(target))
-heart_test <- heart_test %>% 
-  mutate(target = as.numeric(target))
 
 # Filter first row of the data for future use
 heart_row1 <- heart %>% head(1)
@@ -249,7 +246,7 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
   assign(paste0(i,"_explainer"), 
          explain(get(i), label=i,
                  data = heart_train[, names(heart) != "target"],
-                 y = heart_train[, "target"]
+                 y = as.numeric(as.character(heart_train$target))
                  )
   )
   
@@ -293,7 +290,7 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
          get(i) %>% 
            predict(newdata = heart_test) %>% 
            as_tibble() %>% 
-           mutate(value = as.numeric(value)) %>% 
+           mutate(value = as.numeric(as.character(value))) %>% 
            bind_cols(heart_test) %>% 
            select(target, value) %>% 
            rename("pred" = "value")
@@ -307,6 +304,12 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
            mutate(model = i)
   )
 }
+
+assign(paste0("ada2","_roc"),
+         get(paste0("ada","_pred")) %>% 
+           roc_curve(truth = fct_rev(as.factor(target)), pred)
+  )
+
 
 ```
 
@@ -352,6 +355,12 @@ roc_merge %>%
   geom_abline(lty = 3) +
   coord_equal() +
   theme_bw()
+
+gbm2_pred %>% roc_auc(
+  truth = as_factor(target), 
+  pred
+  )
+
 
 ```
 
