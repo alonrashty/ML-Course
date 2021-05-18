@@ -77,7 +77,6 @@ wine <- read_csv("winequality-red.csv") %>%
   as_tibble()
 
 colnames(wine) <- gsub(" ", ".", colnames(wine))
-wine %>% mutate(quality = as_factor(quality)) %>% invisible()
 
 wine %>%
   head() %>% 
