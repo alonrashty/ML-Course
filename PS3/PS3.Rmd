@@ -1,0 +1,357 @@
+---
+title: 'Problem Set 3: Non Parametric Methods'
+author: "Alon Rashty"
+date: "18/05/2021"
+output:
+  html_document: 
+    theme: readable
+    code_folding: show
+    self_contained: yes
+    mode: selfcontained
+editor_options: 
+  chunk_output_type: console
+---
+
+# {.tabset .tabset-fade .tabset-pills}
+
+## Preface and Data
+
+### Packages 
+
+```{r , class.source = 'fold-hide', message = FALSE, warning = FALSE}
+if (!require("pacman")) install.packages("pacman")
+  pacman::p_load(
+    tidyverse,
+    readr,
+    tidymodels,
+    caret,
+    DALEX,
+    rpart,
+    rpart.plot,
+    RColorBrewer,
+    ada,
+    doParallel,
+    e1071,
+    gbm,
+    randomForest
+    )
+
+```
+
+### Question 1
+Because these are parametric model where we assume the model structure and want to find the "correct" parameters, whereas in non-parametric models we want to find the "correct" structure, but we need to limit the algorithm so we don't have over-fitting.
+
+### Question 2
+No, because we don't fully understand these models' operation, and we didn't design them in a way where we can claim for causality.
+
+### Data
+```{r, message = FALSE}
+heart <- read_csv("heart.csv") %>% 
+  mutate(target = as_factor(target))
+
+set.seed(167)
+heart_split <- heart %>% 
+  initial_split(prop = 0.7)
+
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+```
+
+## Trees 
+
+### Question 1
+```{r}
+formula_part <- target ~ sex + cp + chol
+formula_full <- target ~ .
+```
+
+### Question 2
+```{r}
+tree_fit <- rpart(formula = formula_part,
+                  data = heart_train,
+                  method = "class")
+
+rpart.plot(tree_fit, roundint = FALSE)
+```
+
+### Question 3
+```{r}
+tree_fit1 <- heart_train %>% 
+  rpart(formula = formula_full,
+        method = "class", 
+        control = rpart.control(
+          minsplit = 2, 
+          minbucket = 1)
+        )
+
+tree_fit2 <- heart_train %>% 
+  rpart(formula = formula_full, 
+        method = "class"
+        )
+
+```
+
+```{r}
+printcp(tree_fit1)
+printcp(tree_fit2)
+```
+
+There are 9 variables in the less restrictive specifications and 4 in the more restrictive one.
+
+### Question 4
+__Preparation__
+```{r}
+# Create a function to fit the model
+tree_pred <- function(fit, data) {
+  fit %>% 
+  predict(type = "class", newdata = data) %>% 
+  as_tibble() %>% 
+  bind_cols(data) %>% 
+  select(target, value) %>% 
+  rename("pred" = "value") %>% 
+  mutate(target = as_factor(target))
+}
+
+# Predict the training set
+train_pred1 <- tree_pred(fit = tree_fit1, data = heart_train)
+train_pred2 <- tree_pred(fit = tree_fit2, data = heart_train)
+
+# Predict the test set
+test_pred1 <- tree_pred(fit = tree_fit1, data = heart_test)
+test_pred2 <- tree_pred(fit = tree_fit2, data = heart_test)
+
+```
+
+__Training set__
+```{r}
+train_pred1 %>% conf_mat(target, pred)
+train_pred1 %>% accuracy(target, pred)
+
+train_pred2 %>% conf_mat(target, pred)
+train_pred2 %>% accuracy(target, pred)
+
+```
+
+__Test set__
+```{r}
+test_pred1 %>% conf_mat(target, pred)
+test_pred1 %>% accuracy(target, pred)
+
+test_pred2 %>% conf_mat(target, pred)
+test_pred2 %>% accuracy(target, pred)
+
+```
+
+### Question 5
+__Preparation__
+```{r}
+tree_fit3 <- heart_train %>% 
+  rpart(formula = formula_full,
+        method = "class", 
+        control = rpart.control(cp = 0.03)
+        )
+```
+
+```{r}
+train_pred3 <- tree_pred(fit = tree_fit3, data = heart_train)
+test_pred3 <- tree_pred(fit = tree_fit3, data = heart_test)
+```
+
+__Training set__
+```{r}
+train_pred3 %>% conf_mat(target, pred)
+train_pred3 %>% accuracy(target, pred)
+```
+
+__Test set__
+```{r}
+test_pred3 %>% conf_mat(target, pred)
+test_pred3 %>% accuracy(target, pred)
+```
+
+The accuracy got worse in the training set, but better in the test set.
+
+## Fitting a Model
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 3
+                           )
+```
+
+### Question 1
+```{r, cache=TRUE, message=FALSE, warning=FALSE, results=FALSE}
+# Train the data on each model
+for (i in c("knn", "ada", "gbm", "rf")) {
+  assign(i, train(form = formula_full,
+                  data = heart_train,
+                  method = i,
+                  trControl = fitControl
+                  )
+  )
+  assign(paste0(i,"_plot"), ggplot(get(i)))
+}
+
+```
+
+### Question 2
+
+```{r}
+for (i in c("knn", "ada", "gbm", "rf")) {
+  paste0(i, "_plot") %>% get() %>% print()
+}
+```
+
+### Question 3
+```{r}
+gbm_grid <- expand.grid(n.trees = (1:30)*50, 
+                        interaction.depth = c(1,5,9), 
+                        shrinkage = 0.1, 
+                        n.minobsinnode = 20
+                        )
+
+
+```
+
+### Question 4
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+  gbm2 <- train(form = formula_full,
+                data = heart_train,
+                method = "gbm",
+                trControl = fitControl,
+                tuneGrid = gbm_grid
+                )
+  
+```
+
+### Question 5
+```{r}
+gbm2_plot <- ggplot(gbm2)
+gridExtra::grid.arrange(gbm2_plot,gbm_plot, ncol = 2)
+```
+
+## Interpertability
+
+### Preparation
+```{r, warning=FALSE, warning=FALSE, results=FALSE}
+# Adjusting data type for future use
+heart_train <- heart_train %>% 
+  mutate(target = as.numeric(target))
+heart_test <- heart_test %>% 
+  mutate(target = as.numeric(target))
+
+# Filter first row of the data for future use
+heart_row1 <- heart %>% head(1)
+
+# Creating the different objects for each model
+for (i in c("knn", "ada", "gbm2", "rf")) {
+  # Explainers
+  assign(paste0(i,"_explainer"), 
+         explain(get(i), label=i,
+                 data = heart_train[, names(heart) != "target"],
+                 y = heart_train[, "target"]
+                 )
+  )
+  
+  # Model performance objects
+  assign(paste0(i,"_mp"),
+         model_performance(get(paste0(i,"_explainer"))
+         )
+  )
+  
+  # Line graphs
+  assign((paste0(i,"_mp","_line")),
+         plot(get(paste0(i,"_mp")))
+  )
+  
+  # Boxplots
+  assign((paste0(i,"_mp","_boxplot")),
+         plot(get(paste0(i,"_mp")), geom = "boxplot")
+  )
+  
+  # Variable importance objects
+  assign(paste0(i,"_vip"),
+         model_parts(get(paste0(i,"_explainer")), type = "variable_importance")
+  )
+  
+  # Partial dependence objects
+  assign(paste0(i,"_pd"),
+         model_profile(get(paste0(i,"_explainer")), type = "partial")
+  )
+  # Breakdown objects
+  assign(paste0(i,"_bd"),
+         predict_parts(get(paste0(i,"_explainer")), 
+                       new_observation = heart_row1,
+                       type = "break_down")
+  )
+  assign(paste0(i,"_bd_plot"),
+         plot(get(paste0(i,"_bd")))
+  )
+  
+  # Predict objects
+  assign(paste0(i,"_pred"),
+         get(i) %>% 
+           predict(newdata = heart_test) %>% 
+           as_tibble() %>% 
+           mutate(value = as.numeric(value)) %>% 
+           bind_cols(heart_test) %>% 
+           select(target, value) %>% 
+           rename("pred" = "value")
+  )
+
+  # ROC objects
+  assign(paste0(i,"_roc"),
+         get(paste0(i,"_pred")) %>% 
+           roc_curve(truth = fct_rev(as.factor(target)), pred
+                     ) %>% 
+           mutate(model = i)
+  )
+}
+
+```
+
+### Question 2
+```{r}
+# Model performance line graphs
+plot(knn_mp, ada_mp, gbm2_mp, rf_mp)
+
+# Model performance boxplots
+plot(knn_mp, ada_mp, gbm2_mp, rf_mp, geom = "boxplot")
+```
+
+### Question 3
+```{r}
+# Variable importance graphs
+plot(knn_vip, ada_vip, gbm2_vip, rf_vip)
+```
+
+### Question 4
+```{r}
+# Partial dependence graphs
+plot(knn_pd, ada_pd, gbm2_pd, rf_pd)
+```
+
+### Question 5
+```{r}
+# Breakdown graphs
+gridExtra::grid.arrange(knn_bd_plot,
+                        ada_bd_plot, 
+                        gbm2_bd_plot, 
+                        rf_bd_plot, 
+                        ncol = 2)
+
+```
+
+```{r}
+#ROC graphs
+roc_merge <- rbind(knn_roc, ada_roc, gbm2_roc, rf_roc)
+
+roc_merge %>% 
+  ggplot(aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path() +
+  geom_abline(lty = 3) +
+  coord_equal() +
+  theme_bw()
+
+```
+

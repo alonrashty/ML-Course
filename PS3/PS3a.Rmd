@@ -1,0 +1,270 @@
+---
+title: 'Problem Set 3: Non Parametric Methods'
+author: "Alon Rashty"
+date: "18/05/2021"
+output:
+  html_document: 
+    theme: readable
+    code_folding: show
+    self_contained: yes
+    mode: selfcontained
+editor_options: 
+  chunk_output_type: console
+---
+
+# {.tabset .tabset-fade .tabset-pills}
+## Packages 
+
+```{r , message = FALSE, warning = FALSE}
+if (!require("pacman")) install.packages("pacman")
+  pacman::p_load(
+    tidyverse,
+    readr,
+    tidymodels,
+    caret,
+    DALEX,
+    rpart,
+    rpart.plot,
+    RColorBrewer,
+    ada,
+    doParallel,
+    ROCit,
+    e1071,
+    gbm,
+    randomForest,
+    rattle
+    )
+
+```
+
+## Preface
+
+### Question 1
+
+### Question 2
+
+```{r, message = FALSE}
+heart <- read_csv("heart.csv") #%>% 
+ # mutate(target = as_factor(target))
+
+set.seed(167)
+heart_split <- heart %>% 
+  initial_split(prop = 0.7)
+
+heart_train <- training(heart_split)
+heart_test <- testing(heart_split)
+```
+
+## Trees 
+
+### Question 1
+```{r}
+formula_part <- target ~ sex + cp + chol
+formula_full <- target ~ .
+```
+
+### Question 2
+```{r}
+tree_fit <- rpart(formula = formula_part,
+                  data = heart_train,
+                  method = "class")
+rpart.plot(tree_fit, roundint = FALSE)
+fancyRpartPlot(tree_fit, caption = NULL)
+```
+
+### Question 3
+```{r}
+tree_fit1 <- heart_train %>% 
+  rpart(formula = formula_full,
+        method = "class", 
+        control = rpart.control(
+          minsplit = 2, 
+          minbucket = 1
+          )
+        )
+
+tree_fit2 <- heart_train %>% 
+  rpart(formula = formula_full, 
+        method = "class"
+        )
+
+```
+
+```{r}
+printcp(tree_fit1)
+printcp(tree_fit2)
+```
+
+There are 9 variables in the less restricitve specifiacations and 4 in the more restrictive one.
+
+### Question 4
+__Preparation__
+```{r}
+tree_pred <- function(fit, data) {
+  fit %>% 
+  predict(type = "class", newdata = data) %>% 
+  as_tibble() %>% 
+  bind_cols(data) %>% 
+  select(target, value) %>% 
+  rename("pred" = "value") %>% 
+  mutate(target = as_factor(target))
+}
+
+train_pred1 <- tree_pred(fit = tree_fit1, data = heart_train)
+train_pred2 <- tree_pred(fit = tree_fit2, data = heart_train)
+
+test_pred1 <- tree_pred(fit = tree_fit1, data = heart_test)
+test_pred2 <- tree_pred(fit = tree_fit2, data = heart_test)
+
+```
+
+__Training set__
+```{r}
+train_pred1 %>% conf_mat(target, pred)
+train_pred1 %>% accuracy(target, pred)
+
+train_pred2 %>% conf_mat(target, pred)
+train_pred2 %>% accuracy(target, pred)
+
+```
+
+__Test set__
+```{r}
+test_pred1 %>% conf_mat(target, pred)
+test_pred1 %>% accuracy(target, pred)
+
+test_pred2 %>% conf_mat(target, pred)
+test_pred2 %>% accuracy(target, pred)
+
+```
+
+### Question 5
+__Preparation__
+```{r}
+tree_fit3 <- heart_train %>% 
+  rpart(formula = formula_full,
+        method = "class", 
+        control = rpart.control(cp = 0.03)
+        )
+```
+
+```{r}
+train_pred3 <- tree_pred(fit = tree_fit3, data = heart_train)
+test_pred3 <- tree_pred(fit = tree_fit3, data = heart_test)
+```
+
+__Training set__
+```{r}
+train_pred3 %>% conf_mat(target, pred)
+train_pred3 %>% accuracy(target, pred)
+```
+
+__Test set__
+```{r}
+test_pred3 %>% conf_mat(target, pred)
+test_pred3 %>% accuracy(target, pred)
+```
+
+The accuracy got worse in the training set, but better in the test set.
+
+## Fitting a Model
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 3
+                           )
+```
+
+### Question 1
+```{r, cache=TRUE, message=FALSE, warning=FALSE, results=FALSE}
+#features <- as.matrix(heart_train[, names(heart_train) != "target"])
+#outcome  <-  as.matrix(heart_train[, "target"])
+
+for (i in c("knn", "ada", "gbm", "rf")) {
+  assign(i, train(form = formula_full,
+                  data = heart,
+                  method = i,
+                  trControl = fitControl
+                  )
+  )
+  assign(paste0(i,"_plot"), ggplot(get(i)))
+}
+
+```
+
+### Question 2
+
+```{r}
+for (i in c("knn", "ada", "gbm", "rf")) {
+  paste0(i, "_plot") %>% get() %>% print()
+}
+```
+
+### Question 3
+```{r}
+gbm_grid <- expand.grid(n.trees = (1:30)*50, 
+                        interaction.depth = c(1,5,9), 
+                        shrinkage = 0.1, 
+                        n.minobsinnode = 20
+                        )
+
+
+```
+
+### Question 4
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+  gbm2 <- train(form = formula_full,
+                data = heart_train,
+                method = "gbm",
+                trControl = fitControl,
+                tuneGrid = gbm_grid
+                )
+  
+```
+
+### Question 5
+```{r}
+gbm2_plot <- ggplot(gbm2)
+gridExtra::grid.arrange(gbm2_plot,gbm_plot, ncol = 2)
+```
+
+## Interpertability
+
+### Question 1+2
+```{r, warning=FALSE, warning=FALSE, results=FALSE}
+heart <- heart %>% 
+  mutate(target = as.numeric(target))
+
+for (i in c("knn", "ada", "gbm2", "rf")) {
+  assign(paste0(i,"_explainer"), 
+         explain(get(i), label=i,
+                 data = heart[, names(heart) != "target"],
+                 y = heart[, "target"]
+                 )
+  )
+ 
+  assign(paste0(i,"_mp"),
+         model_performance(get(paste0(i,"_explainer"))
+         )
+         )
+  assign((paste0(i,"_mp","_line")),
+         plot(get(paste0(i,"_mp")))
+  )
+  assign((paste0(i,"_mp","_boxplot")),
+         plot(get(paste0(i,"_mp")), geom = "boxplot")
+  )
+}
+
+plot(knn_mp, ada_mp, gbm2_mp, rf_mp)
+plot(knn_mp, ada_mp, gbm2_mp, rf_mp, geom = "boxplot")
+
+```
+
+### Question 3
+
+
+### Question 4
+
+
+### Question 5
+
