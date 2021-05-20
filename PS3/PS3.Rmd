@@ -305,12 +305,6 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
   )
 }
 
-assign(paste0("ada2","_roc"),
-         get(paste0("ada","_pred")) %>% 
-           roc_curve(truth = fct_rev(as.factor(target)), pred)
-  )
-
-
 ```
 
 ### Question 2
@@ -345,6 +339,7 @@ gridExtra::grid.arrange(knn_bd_plot,
 
 ```
 
+### Question 6
 ```{r}
 #ROC graphs
 roc_merge <- rbind(knn_roc, ada_roc, gbm2_roc, rf_roc)
@@ -356,8 +351,9 @@ roc_merge %>%
   coord_equal() +
   theme_bw()
 
+# AUC of boosting
 gbm2_pred %>% roc_auc(
-  truth = as_factor(target), 
+  truth = fct_rev(as_factor(target)), 
   pred
   )
 
