@@ -198,10 +198,7 @@ pre code {
     DALEX,
     rpart,
     rpart.plot,
-    rattle,
-    RColorBrewer,
     ada,
-    doParallel,
     e1071,
     gbm,
     randomForest
@@ -434,18 +431,15 @@ heart_row1 &lt;- heart %&gt;% head(1)
 # Creating the different objects for each model
 for (i in c(&quot;knn&quot;, &quot;ada&quot;, &quot;gbm2&quot;, &quot;rf&quot;)) {
   # Explainers
-  assign(paste0(i,&quot;_explainer&quot;), 
-         explain(get(i), label=i,
-                 data = heart_train[, names(heart) != &quot;target&quot;],
-                 y = as.numeric(as.character(heart_train$target))
-                 )
+  explainer &lt;- explain(get(i), label=i,
+               data = heart_train[, names(heart) != &quot;target&quot;],
+               y = as.numeric(as.character(heart_train$target))
   )
-  
+
   # Model performance objects
   assign(paste0(i,&quot;_mp&quot;),
-         model_performance(get(paste0(i,&quot;_explainer&quot;))
+         model_performance(explainer)
          )
-  )
   
   # Line graphs
   assign((paste0(i,&quot;_mp&quot;,&quot;_line&quot;)),
@@ -459,16 +453,16 @@ for (i in c(&quot;knn&quot;, &quot;ada&quot;, &quot;gbm2&quot;, &quot;rf&quot;))
   
   # Variable importance objects
   assign(paste0(i,&quot;_vip&quot;),
-         model_parts(get(paste0(i,&quot;_explainer&quot;)), type = &quot;variable_importance&quot;)
+         model_parts(explainer, type = &quot;variable_importance&quot;)
   )
   
   # Partial dependence objects
   assign(paste0(i,&quot;_pd&quot;),
-         model_profile(get(paste0(i,&quot;_explainer&quot;)), type = &quot;partial&quot;)
+         model_profile(explainer, type = &quot;partial&quot;)
   )
   # Breakdown objects
   assign(paste0(i,&quot;_bd&quot;),
-         predict_parts(get(paste0(i,&quot;_explainer&quot;)), 
+         predict_parts(explainer, 
                        new_observation = heart_row1,
                        type = &quot;break_down&quot;)
   )
@@ -494,6 +488,8 @@ for (i in c(&quot;knn&quot;, &quot;ada&quot;, &quot;gbm2&quot;, &quot;rf&quot;))
                      ) %&gt;% 
            mutate(model = i)
   )
+  
+  assign(paste0(i,&quot;_explainer&quot;), explainer)
 }</code></pre>
 </div>
 <div id="question-2-3" class="section level3">

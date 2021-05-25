@@ -28,10 +28,7 @@ if (!require("pacman")) install.packages("pacman")
     DALEX,
     rpart,
     rpart.plot,
-    rattle,
-    RColorBrewer,
     ada,
-    doParallel,
     e1071,
     gbm,
     randomForest
@@ -243,18 +240,15 @@ heart_row1 <- heart %>% head(1)
 # Creating the different objects for each model
 for (i in c("knn", "ada", "gbm2", "rf")) {
   # Explainers
-  assign(paste0(i,"_explainer"), 
-         explain(get(i), label=i,
-                 data = heart_train[, names(heart) != "target"],
-                 y = as.numeric(as.character(heart_train$target))
-                 )
+  explainer <- explain(get(i), label=i,
+               data = heart_train[, names(heart) != "target"],
+               y = as.numeric(as.character(heart_train$target))
   )
-  
+
   # Model performance objects
   assign(paste0(i,"_mp"),
-         model_performance(get(paste0(i,"_explainer"))
+         model_performance(explainer)
          )
-  )
   
   # Line graphs
   assign((paste0(i,"_mp","_line")),
@@ -268,16 +262,16 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
   
   # Variable importance objects
   assign(paste0(i,"_vip"),
-         model_parts(get(paste0(i,"_explainer")), type = "variable_importance")
+         model_parts(explainer, type = "variable_importance")
   )
   
   # Partial dependence objects
   assign(paste0(i,"_pd"),
-         model_profile(get(paste0(i,"_explainer")), type = "partial")
+         model_profile(explainer, type = "partial")
   )
   # Breakdown objects
   assign(paste0(i,"_bd"),
-         predict_parts(get(paste0(i,"_explainer")), 
+         predict_parts(explainer, 
                        new_observation = heart_row1,
                        type = "break_down")
   )
@@ -303,6 +297,8 @@ for (i in c("knn", "ada", "gbm2", "rf")) {
                      ) %>% 
            mutate(model = i)
   )
+  
+  assign(paste0(i,"_explainer"), explainer)
 }
 
 ```
