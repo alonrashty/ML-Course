@@ -1,0 +1,439 @@
+---
+title: "Kaggle Competition"
+author: "Alon Rashty & Yuval Rittberg"
+date: "6/31/2021"
+output:
+  html_document: 
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: show
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages & Functions
+```{r , class.source = 'fold-hide', message = FALSE, warning = FALSE}
+if (!require("pacman")) install.packages("pacman")
+  pacman::p_load(
+    
+    # For data analysis and visualisation
+    tidyverse,
+    summarytools,
+    DataExplorer,
+    stargazer,
+    xtable,
+    gridExtra,
+    kableExtra,
+    papeR,
+    skimr,
+    GGally,
+    
+    # For modeling
+    tidymodels,
+    caret,
+    caretEnsemble,
+    glmnet,
+    e1071,
+    gbm,
+    randomForest,
+    xgboost,
+    
+    # For performance
+    doParallel
+    )
+
+# Function to detect binary variables
+is_binary <- function(x) {
+  x0 <- na.omit(x)
+  is.numeric(x) && length(unique(x0)) %in% 1:2 && all(x0 %in% 0:1)
+}
+
+# Function for table formatting
+kable_format <- function(x, digits = 1, caption = NULL,
+                         position = "center"
+                         ) {
+  kbl(x = x, digits = digits, caption = caption) %>% 
+  row_spec(row = 0,bold = TRUE) %>% 
+  kable_classic_2(lightable_options = c("bordered", "hover"), full_width = F, 
+                  html_font = "Cambria",position = position
+                  )
+}  
+```
+
+# Data
+```{r, message=FALSE}
+train <- read_csv("Kaggle/train.csv") %>% 
+  mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
+
+test <- read_csv("Kaggle/test.csv") # %>% 
+  mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
+
+# Split variables to discrete and continuous
+train_explore <- train %>% 
+  select(-ID) %>% 
+  split_columns()
+
+continuous <- names(train_explore$continuous)
+discrete <- names(train_explore$discrete)
+```
+
+## Descriptive Statistics
+
+### Numeric
+```{r}
+dfSummary(train, plain.ascii = FALSE, style = "multiline")
+# glimpse(train_explore)
+# train %>% 
+#   mutate(across(.cols = where(is.factor), ~as.numeric(as.character(.x)))) %>% 
+#   as.data.frame() %>%
+#   stargazer(type = "html")
+
+kable_format(summarize(train, type = "numeric"))
+kable_format(summarize(train, type = "factor"))
+
+# freq(train, report.nas = FALSE)
+
+# Cross tabulations
+  # for (i in names(x)) {
+  #   for(j in names(x)) {
+  #     if(i!=j) {
+  #       print(ctable(i,j))
+  #     }
+  #   }
+  # }
+```
+
+### Visualizations
+```{r}
+ggplot(train) +
+  aes(x = female, y = lnwage) +
+  geom_boxplot() +
+  facet_wrap(~black)
+
+tree_fit <- rpart(formula = lnwage ~ .,
+                  data = train,
+                  method = "anova",
+                  control = rpart.control(minsplit = 2, minbucket = 1)
+)
+
+printcp(tree_fit)
+rpart.plot(tree_fit, roundint = FALSE)
+
+# Scatterplots
+plot_scatterplot(train_explore$continuous, by = "lnwage")
+
+# Boxplots of lnwage by dummys
+boxplots <- list()
+for (i in names(train_explore$discrete)) {
+  boxplot <- train %>% 
+    ggplot(aes_string(x = as.character(i), y = "lnwage", color = as.character(i))) +
+    geom_boxplot() +
+    theme(legend.position = "none")
+
+    name <- paste0(i,"_boxplot")
+  boxplots[[name]] <- boxplot
+}
+rm(name, boxplot)
+grid.arrange(grobs = boxplots[1:16])
+grid.arrange(grobs = boxplots[17:32])
+
+# Other
+plot_histogram(train)
+##plot_correlation(train_explore)
+
+
+
+train <- train %>% 
+  mutate(region = as_factor(ifelse(northeast==1, 1, 
+                                   ifelse(northcentral==1, 2, 
+                                          ifelse(south==1, 3, 4)))),
+         race = as_factor(ifelse(black==1, 1, 
+                                   ifelse(hisp==1, 2, 
+                                          ifelse(otherrace==1, 3, 4)))))
+
+group <- train$race
+
+train %>% 
+  ggplot(aes(x = edyrs, y = lnwage)) +
+  geom_jitter(aes(color = group)) +
+  geom_smooth(method = "lm") +
+  geom_smooth(aes(color = group), method = "lm") +
+  facet_wrap(~ group)
+
+train %>% 
+    ggplot(aes(x = race, y = edyrs)) +
+    geom_violin() +
+    theme(legend.position = "none")
+
+geom_boxplot() + geom_jitter(width = 0.2)
+```
+
+# Modelling
+```{r}
+# Cross validation folds
+cv_folds <- train %>% 
+  vfold_cv(v = 5) # can also add repeats and strata
+
+# Base recipe (data processing)
+train_rec <- recipe(lnwage ~ ., data = train) %>% 
+  update_role(ID, new_role = "ID") %>% 
+  step_dummy(all_nominal()) %>% 
+  step_zv(all_predictors()) %>% 
+  step_normalize(all_numeric_predictors()) 
+```
+
+## LASSO & Ridge
+```{r}
+# Recipe
+linear_rec <- train_rec # can adjust differently
+
+# Model definition
+  # Lasso 
+  lasso_model <- 
+    linear_reg() %>% 
+      set_args(penalty = tune(),
+               mixture = 1, 
+               nlambda = 10) %>% # need to understand
+      set_engine("glmnet") %>% 
+      set_mode("regression")
+    
+  # Ridge  
+  ridge_model <- 
+    linear_reg(penalty = tune(),
+               mixture = 0) %>% 
+      set_args(nlambda = 10) %>% # need to understand
+      set_engine("glmnet") %>% 
+      set_mode("regression")
+  
+# Define parameters for tuning
+linear_grid <- lasso_model %>% # not sure that's right, maybe instead of nlambda above
+  parameters()
+
+# Combine models and workflow
+lasso_wf <- workflow() %>% 
+  add_recipe(linear_rec) %>% 
+  add_model(lasso_model)
+
+# Tune parameters
+lasso_results <- lm_wf %>% 
+  tune_grid(penalty,
+            resamples = cv_folds)
+
+lasso_results %>% show_best(metric = "rmse")
+
+# Visualize results (try to plot both models)
+lasso_results %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>% 
+    ggplot(aes(penalty, mean)) +
+      geom_errorbar(aes(
+        ymin = mean - std_err,
+        ymax = mean + std_err)
+        ) +
+      geom_line(size = 1.5) +
+      scale_x_log10() +
+      theme(legend.position = "none")
+
+# Select best model
+lambda_min <- lm_results %>% 
+select_best(metric = "rmse")
+
+lambda_1se <- lm_results %>% 
+  select_by_one_std_err(
+    metric = "rmse",
+    desc(penalty)
+  ) %>% 
+  select(penalty)
+
+lm_wfl_final <- lm_wfl %>%
+finalize_workflow(lambda_1se)
+
+lasso_results <- lm_wfl_final %>% 
+last_fit(split = cv_folds)
+
+```
+
+## Random Forests
+```{r}
+# Define model
+rf_model <- 
+  rand_forest(mtry = tune(), 
+              trees = tune(),
+              min_n = tune()
+              ) %>% 
+  set_engine("ranger") %>% 
+  set_mode("regression")
+
+# Define parameters for tuning
+rf_params <- 
+  rf_model %>% 
+  parameters() %>% 
+  update(min_n = min_n(c(2L, 30L))) %>% # what's this? maybe define some manually?
+  finalize(select(train, -lnwage))
+```
+
+## XGBoost
+```{r}
+# XGBoost (can tune more parameters)
+  # Define model
+  xgb_model <- 
+    boost_tree(mtry = tune(),             # number of predictors to choose from at each split (for randomness)
+                 trees = tune(),          # number of trees (complexity)
+                 min_n = tune(),          # minimum obs in a node (complexity)
+                 tree_depth = tune(),     # max number of split (complexity)
+                 learn_rate = tune(),     # step size
+                 loss_reduction = tune(), # the reduction in the loss function required to split further
+                 sample_size = tune()     # fraction of data in each round (for randomness)
+                 ) %>%
+    set_mode("regression") %>% 
+    set_engine("xgboost", objective = "reg:squarederror")
+    
+# Define parameters for tuning
+ xgb_grid <- grid_latin_hypercube(
+   trees(),
+   tree_depth(),
+   min_n(),
+   loss_reduction(),
+   sample_size = sample_prop(),
+   finalize(mtry(), train),
+   learn_rate(),
+   size = 30
+   )
+
+# Combine model and recipe
+xgb_wf <- 
+  workflow() %>% 
+  add_recipe(train_rec) %>% 
+  add_model(xgb_model)
+
+# Tune parameters
+xgb_results <- 
+  tune_grid(xgb_wf,
+            resamples = cv_folds,
+            grid = xgb_grid,
+            control = control_grid(save_pred = TRUE)
+            )
+
+# Evaluate tuning results
+show_best(xgb_results, "rmse", n = 10)
+
+# Visualize results
+xgb_results %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, mtry:sample_size) %>%
+  pivot_longer(mtry:sample_size,
+               values_to = "value",
+               names_to = "parameter"
+               ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "rmse")
+
+# Select best model
+xgb_best <- select_best(xgb_results, metric = "rmse")
+# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
+# xgb_1std <- select_by_one_std_err(xgb_results, mtry, tree_depth, trees, min_n, 
+#                       metric = "rmse")
+
+# Finalize workflow
+xgb_final <- finalize_workflow(xgb_wf, xgb_best)
+xgb_model_final <- finalize_model(xgb_model, xgb_best)
+xgb_final_fit <- fit(xgb_model_final, lnwage ~ ., data = train)
+
+# Variable importance
+xgb_final_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+  
+# Predict on test data
+xgb_pred <- 
+    predict(xgb_final_fit, new_data = test) %>% 
+    bind_cols(select(test, ID))
+```
+
+# Submission
+```{r}
+write_csv(final_prediction, "submission.csv")
+
+```
+
+# Tidymodels workflow
+
+```{r}
+
+
+
+
+  
+```
+
+
+
+
+# caret workflow
+```{r}
+registerDoParallel(4)
+
+set.seed(1)
+
+# Cross-validation and performance
+control <- trainControl(method = "cv",
+                        number = 5, 
+                        savePredictions = "final",
+                        allowParallel = TRUE)
+
+methods <- c("lm", "rf", "gbm", "xgbTree", "xgbLinear")
+
+model_list <- caretList(lnwage ~ ., data = train,
+                        trControl = control,
+                        methodList = methods,
+                        tuneList = NULL,
+                        continue_on_fail = FALSE, 
+                        preProcess = c("center","scale"))
+
+for (i in model_list) {
+  print(i)
+}
+
+model_results <- data.frame(
+ lm = min(model_list$lm$results$RMSE),
+ rf = min(model_list$rf$results$RMSE),
+ gbm = min(model_list$gbm$results$RMSE),
+ xgbTree = min(model_list$xgbTree$results$RMSE),
+ xgbLinear = min(model_list$xgbLinear$results$RMSE)
+ )
+print(model_results)
+
+resamples <- resamples(model_list)
+dotplot(resamples, metric = "RMSE")
+
+modelCor(resamples)
+
+ensemble_1 <- caretEnsemble(model_list, 
+                            metric = "RMSE", 
+                            trControl = control)
+summary(ensemble_1)
+plot(ensemble_1)
+
+for (i in model_list) {
+  pred <- predict.train(i, newdata = test) %>% 
+    as_tibble() %>% 
+    bind_cols(test) %>% 
+    select(value, ID) %>% 
+    rename(pred = value)
+  
+  assign(paste0(i,"_pred"), pred)
+}
+rm(pred)
+
+predict_ens1 <- predict(ensemble_1, newdata = test) %>% 
+    as_tibble() %>% 
+    bind_cols(test) %>% 
+    select(value, ID) %>% 
+    rename(pred = value)
+
+
+```
+
