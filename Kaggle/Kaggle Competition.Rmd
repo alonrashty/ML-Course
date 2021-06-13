@@ -18,22 +18,18 @@ editor_options:
 if (!require("pacman")) install.packages("pacman")
   pacman::p_load(
     
-    # For data analysis and visualisation
+    # For data manipulation, analysis and visualization
     tidyverse,
     summarytools,
     DataExplorer,
-    stargazer,
-    xtable,
     gridExtra,
     kableExtra,
     papeR,
-    skimr,
-    GGally,
+    sorensonimpact,
+    corrplot,
     
     # For modeling
     tidymodels,
-    caret,
-    caretEnsemble,
     glmnet,
     e1071,
     gbm,
@@ -43,6 +39,9 @@ if (!require("pacman")) install.packages("pacman")
     # For performance
     doParallel
     )
+  
+  devtools::install_github("Sorenson-Impact/sorensonimpact")
+
 
 # Function to detect binary variables
 is_binary <- function(x) {
@@ -64,53 +63,163 @@ kable_format <- function(x, digits = 1, caption = NULL,
 
 # Data
 ```{r, message=FALSE}
-train <- read_csv("Kaggle/train.csv") %>% 
+train_raw <- read_csv("Kaggle/train.csv") # %>% 
   mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
 
-test <- read_csv("Kaggle/test.csv") # %>% 
+train <- train_raw # For analysis
+
+test <- read_csv("Kaggle/test.csv") %>% 
   mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
 
-# Split variables to discrete and continuous
-train_explore <- train %>% 
-  select(-ID) %>% 
-  split_columns()
-
-continuous <- names(train_explore$continuous)
-discrete <- names(train_explore$discrete)
+# # Split variables to discrete and continuous
+# train_explore <- train %>% 
+#   select(-ID) %>% 
+#   split_columns()
+# 
+# continuous <- names(train_explore$continuous)
+# discrete <- names(train_explore$discrete)
 ```
 
-## Descriptive Statistics
 
-### Numeric
 ```{r}
-dfSummary(train, plain.ascii = FALSE, style = "multiline")
-# glimpse(train_explore)
-# train %>% 
-#   mutate(across(.cols = where(is.factor), ~as.numeric(as.character(.x)))) %>% 
-#   as.data.frame() %>%
-#   stargazer(type = "html")
 
-kable_format(summarize(train, type = "numeric"))
-kable_format(summarize(train, type = "factor"))
+corr_simple <- function(data=df,sig=0.5){
+  #run a correlation and drop the insignificant ones
+  corr <- cor(data)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #drop perfect correlations
+  corr[corr == 1] <- NA 
+  #turn into a 3-column table
+  corr <- as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr <- na.omit(corr) 
+  #select significant values  
+  corr <- subset(corr, abs(Freq) > sig) 
+  #sort by highest correlation
+  corr <- corr[order(-abs(corr$Freq)),] 
+  #print table
+  print(corr)
+  #turn corr back into matrix in order to plot with corrplot
+  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
+  
+  #plot correlations visually
+  corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ")
+}
 
-# freq(train, report.nas = FALSE)
-
-# Cross tabulations
-  # for (i in names(x)) {
-  #   for(j in names(x)) {
-  #     if(i!=j) {
-  #       print(ctable(i,j))
-  #     }
-  #   }
-  # }
+corr_simple(train_rec, sig = 0.9)
 ```
 
-### Visualizations
+
+## First look
+```{r, results='asis'}
+summarise(train, digits = 1, sep = TRUE, count = FALSE) %>% kable_format()
+summarise(test, digits = 1, sep = TRUE, count = FALSE) %>% kable_format()
+
+
+```
+We can see that `farmer` is always zero, so it'll be dropped in the recipe.
+
+There is one observation with `edyrs==0`. He is Hispanic, male, construction worker. Should we drop it?
+
+## Correlation
 ```{r}
-ggplot(train) +
-  aes(x = female, y = lnwage) +
-  geom_boxplot() +
-  facet_wrap(~black)
+corrplot(cor(train),
++          method = "number",
++          type = "upper")
+```
+
+
+## Education
+Let's look at the feature `edyrs`
+```{r}
+train %>% ggplot(aes(edyrs)) + 
+  geom_histogram(binwidth = 1)
+```
+
+We can see that there's a relatively significant concentration at the value of 12 and 16, which represent finishing high school and college, respectively. We don't think there's important information between the values below 12, so we'll replace this feature with a dummy for finishing high school. 
+
+The values of 13-15 and 17 can imply for students. We can check their experience and see if it makes sense:
+```{r}
+train %>% 
+  filter(edyrs %in% c(13:15)) %>% 
+  ggplot(aes(expf)) +
+  geom_histogram(binwidth = 1)
+```
+
+We can't conclude that these are students, maybe dropouts?
+
+# Occupation
+
+```{r}
+
+
+occupations <- c("manager", "business", "financialop", "computer", "architect", "scientist", "socialworker", "postseceduc", "legaleduc", "artist", "lawyerphysician", "healthcare", "healthsupport", "protective", "foodcare", "building", "sales", "officeadmin", "farmer", "constructextractinstall", "production", "transport")
+
+train_cat <- train %>% select(occupations) %>% sweep(2, c(1:length(occupations)), "*") %>% mutate(occupation = rowSums(.)) %>% bind_cols(train %>% select(lnwage)) 
+train_cat %>% group_by(occupation) %>% dplyr::summarise(x = mean(exp(lnwage))) %>% arrange(desc(x)) %>% kable_format()
+
+train_cat %>% ggplot(aes(x = reorder(occupation, lnwage, FUN = median), y = lnwage, fill = as_factor(occupation))) +
+  geom_boxplot()
+
+
+```
+
+
+## Creating features for exploration
+```{r}
+train <- train %>% 
+  mutate(in_school = as_factor(if_else(edyrs %in% c(13:15, 17), 1, 0)),
+         educ = fct_case_when(
+           edyrs <= 12   ~ "high school",
+           edyrs %in% c(13:16) ~ "college",
+           edyrs > 16  ~ "advanced"),
+         region = case_when(
+           northeast==1    ~ "northeast",
+           northcentral==1 ~ "northcentral",
+           south==1        ~ "south", 
+           TRUE            ~ "other"),
+         race = case_when(
+           black==1     ~ "black", 
+           hisp==1      ~ "hisp", 
+           otherrace==1 ~ "otherrace", 
+           TRUE         ~ "white")
+         )
+
+
+train <- train_raw %>% mutate(high_school = if_else(edyrs<=12, 1, 0),
+                              white = if_else(black==0 & hisp==0 & otherrace==0, 1, 0),
+                              academic = if_else(edyrs>=16, 1, 0),
+                              white_collar = if_else(manager==1 | business==1 | financialop==1 | computer==1 | scientist==1 | legaleduc==1 | lawyerphysician==1 | healthcare==1, 1, 0)
+)
+```
+
+```{r}
+train %>% 
+  ggplot(aes(x = region, y = lnwage, fill = female)) +
+  geom_boxplot() 
+
+train %>% 
+  ggplot(aes(x = race, y = lnwage, fill = female)) +
+  geom_boxplot() 
+
+train %>% 
+  ggplot(aes(x = educ, y = lnwage, fill = female)) +
+  geom_boxplot() 
+
+train %>% 
+  filter(edyrs<=12) %>% 
+  ggplot(aes(x = edyrs, y = lnwage))+
+  geom_jitter() + 
+  geom_smooth()
+```
+The south might be poorer then the rest.
+
+
+
+```{r}
+ggplot(train, aes(x = race, y = lnwage, fill = female)) +
+  geom_boxplot() 
 
 tree_fit <- rpart(formula = lnwage ~ .,
                   data = train,
@@ -118,56 +227,13 @@ tree_fit <- rpart(formula = lnwage ~ .,
                   control = rpart.control(minsplit = 2, minbucket = 1)
 )
 
-printcp(tree_fit)
 rpart.plot(tree_fit, roundint = FALSE)
 
-# Scatterplots
-plot_scatterplot(train_explore$continuous, by = "lnwage")
-
-# Boxplots of lnwage by dummys
-boxplots <- list()
-for (i in names(train_explore$discrete)) {
-  boxplot <- train %>% 
-    ggplot(aes_string(x = as.character(i), y = "lnwage", color = as.character(i))) +
-    geom_boxplot() +
-    theme(legend.position = "none")
-
-    name <- paste0(i,"_boxplot")
-  boxplots[[name]] <- boxplot
-}
-rm(name, boxplot)
-grid.arrange(grobs = boxplots[1:16])
-grid.arrange(grobs = boxplots[17:32])
 
 # Other
 plot_histogram(train)
 ##plot_correlation(train_explore)
 
-
-
-train <- train %>% 
-  mutate(region = as_factor(ifelse(northeast==1, 1, 
-                                   ifelse(northcentral==1, 2, 
-                                          ifelse(south==1, 3, 4)))),
-         race = as_factor(ifelse(black==1, 1, 
-                                   ifelse(hisp==1, 2, 
-                                          ifelse(otherrace==1, 3, 4)))))
-
-group <- train$race
-
-train %>% 
-  ggplot(aes(x = edyrs, y = lnwage)) +
-  geom_jitter(aes(color = group)) +
-  geom_smooth(method = "lm") +
-  geom_smooth(aes(color = group), method = "lm") +
-  facet_wrap(~ group)
-
-train %>% 
-    ggplot(aes(x = race, y = edyrs)) +
-    geom_violin() +
-    theme(legend.position = "none")
-
-geom_boxplot() + geom_jitter(width = 0.2)
 ```
 
 # Modelling
@@ -179,46 +245,34 @@ cv_folds <- train %>%
 # Base recipe (data processing)
 train_rec <- recipe(lnwage ~ ., data = train) %>% 
   update_role(ID, new_role = "ID") %>% 
-  step_dummy(all_nominal()) %>% 
+  step_rm(edyrs) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_interact(~ all_predictors():all_predictors()) %>% 
+  step_corr(all_predictors(), threshold = 1) %>% 
   step_zv(all_predictors()) %>% 
-  step_normalize(all_numeric_predictors()) 
+  step_normalize(all_predictors())
+
 ```
 
-## LASSO & Ridge
+## LASSO
 ```{r}
-# Recipe
-linear_rec <- train_rec # can adjust differently
-
 # Model definition
-  # Lasso 
-  lasso_model <- 
-    linear_reg() %>% 
-      set_args(penalty = tune(),
-               mixture = 1, 
-               nlambda = 10) %>% # need to understand
-      set_engine("glmnet") %>% 
-      set_mode("regression")
-    
-  # Ridge  
-  ridge_model <- 
-    linear_reg(penalty = tune(),
-               mixture = 0) %>% 
-      set_args(nlambda = 10) %>% # need to understand
-      set_engine("glmnet") %>% 
-      set_mode("regression")
-  
+lasso_model <- 
+  linear_reg(penalty = tune(), mixture = 1) %>% 
+    set_engine("glmnet") %>% 
+    set_mode("regression")
+
 # Define parameters for tuning
-linear_grid <- lasso_model %>% # not sure that's right, maybe instead of nlambda above
-  parameters()
+lasso_grid <- grid_regular(penalty(), levels = 50)
 
 # Combine models and workflow
 lasso_wf <- workflow() %>% 
-  add_recipe(linear_rec) %>% 
+  add_recipe(train_rec) %>% 
   add_model(lasso_model)
 
 # Tune parameters
-lasso_results <- lm_wf %>% 
-  tune_grid(penalty,
+lasso_results <- lasso_wf %>% 
+  tune_grid(grid = lasso_grid,
             resamples = cv_folds)
 
 lasso_results %>% show_best(metric = "rmse")
@@ -237,21 +291,23 @@ lasso_results %>%
       theme(legend.position = "none")
 
 # Select best model
-lambda_min <- lm_results %>% 
+lasso_best <- lasso_results %>% 
 select_best(metric = "rmse")
 
-lambda_1se <- lm_results %>% 
+lambda_1se <- lasso_results %>% 
   select_by_one_std_err(
     metric = "rmse",
     desc(penalty)
   ) %>% 
   select(penalty)
 
-lm_wfl_final <- lm_wfl %>%
-finalize_workflow(lambda_1se)
+# Finalize workflow
+lasso_final <- finalize_workflow(lasso_wf, lasso_best)
+lasso_model_final <- finalize_model(lasso_model, lasso_best)
+lasso_final_fit <- fit(lasso_model_final, lnwage ~ ., data = train)
 
-lasso_results <- lm_wfl_final %>% 
-last_fit(split = cv_folds)
+# Variable importance
+lasso_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "point")
 
 ```
 
@@ -263,15 +319,62 @@ rf_model <-
               trees = tune(),
               min_n = tune()
               ) %>% 
-  set_engine("ranger") %>% 
+  set_engine("randomForest") %>% 
   set_mode("regression")
 
 # Define parameters for tuning
-rf_params <- 
-  rf_model %>% 
-  parameters() %>% 
-  update(min_n = min_n(c(2L, 30L))) %>% # what's this? maybe define some manually?
-  finalize(select(train, -lnwage))
+rf_grid <- grid_latin_hypercube(
+  mtry(c(6,10)), 
+  trees(),
+  min_n(),
+  size = 30
+  )
+
+# Combine model and recipe
+rf_wf <- 
+  workflow() %>% 
+  add_recipe(train_rec) %>% 
+  add_model(rf_model)
+
+# Tune parameters
+rf_results <- 
+  tune_grid(rf_wf,
+            resamples = cv_folds,
+            grid = rf_grid,
+            control = control_grid(save_pred = TRUE)
+            )
+
+# Evaluate tuning results
+show_best(rf_results, "rmse", n = 10)
+
+# Visualize results
+rf_results %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, mtry:min_n) %>%
+  pivot_longer(mtry:min_n,
+               values_to = "value",
+               names_to = "parameter"
+               ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(alpha = 0.8, show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "rmse")
+
+# Select best model
+rf_best <- select_best(rf_results, metric = "rmse")
+# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
+# rf_1std <- select_by_one_std_err(rf_results, mtry, trees, min_n, metric = "rmse")
+
+# Finalize workflow
+rf_final <- finalize_workflow(rf_wf, rf_best)
+rf_model_final <- finalize_model(rf_model, rf_best)
+rf_final_fit <- fit(rf_model_final, lnwage ~ ., data = train)
+
+# Variable importance
+rf_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "point")
+  
+  
 ```
 
 ## XGBoost
@@ -345,13 +448,21 @@ xgb_model_final <- finalize_model(xgb_model, xgb_best)
 xgb_final_fit <- fit(xgb_model_final, lnwage ~ ., data = train)
 
 # Variable importance
-xgb_final_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+xgb_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "point")
   
+
+```
+
+## Prediction
+```{r}
 # Predict on test data
 xgb_pred <- 
     predict(xgb_final_fit, new_data = test) %>% 
     bind_cols(select(test, ID))
 ```
+
+
+
 
 # Submission
 ```{r}
@@ -359,15 +470,6 @@ write_csv(final_prediction, "submission.csv")
 
 ```
 
-# Tidymodels workflow
-
-```{r}
-
-
-
-
-  
-```
 
 
 
