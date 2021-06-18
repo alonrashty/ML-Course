@@ -7,7 +7,7 @@
 
 * [Problem Set 3: Non Parametric Methods](https://raw.githack.com/alonrashty/ML-Course/main/PS3/PS3.html)
 
-* [Problem Set 3: Non Parametric Methods] -- Soon
+* Problem Set 4: Non Parametric Methods &mdash; Soon
 
-* [Problem Set 3: Text Mining](https://raw.githack.com/alonrashty/ML-Course/main/PS5/PS5.html)
+* [Problem Set 5: Text Mining](https://raw.githack.com/alonrashty/ML-Course/main/PS5/PS5.html)
 
