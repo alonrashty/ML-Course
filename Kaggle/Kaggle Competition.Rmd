@@ -12,9 +12,13 @@ output:
 editor_options: 
   chunk_output_type: console
 ---
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+```
+
 
 # Packages & Functions
-```{r , class.source = 'fold-hide', message = FALSE, warning = FALSE}
+```{r , class.source = 'fold-hide', message = FALSE}
 if (!require("pacman")) install.packages("pacman")
   pacman::p_load(
     # For data manipulation, analysis and visualization
@@ -68,7 +72,7 @@ test <- read_csv("Kaggle/test.csv") # %>%
 ```
 
 ## First look
-```{r, warning=FALSE}
+```{r)
 summarise(train, digits = 1, sep = TRUE, count = FALSE) %>% kable_format()
 ```
 We can see that `farmer` is always zero, so it'll be dropped in the recipe.
