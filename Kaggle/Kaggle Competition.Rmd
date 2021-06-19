@@ -13,7 +13,7 @@ editor_options:
   chunk_output_type: console
 ---
 ```{r, setup, include=FALSE}
-knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message=FALSE, warning = FALSE)
 ```
 
 
@@ -28,6 +28,7 @@ if (!require("pacman")) install.packages("pacman")
     papeR,
     remotes,
     corrplot,
+    RColorBrewer,
     
     # For modeling
     tidymodels,
@@ -42,7 +43,7 @@ if (!require("pacman")) install.packages("pacman")
   pacman::p_load_gh("Sorenson-Impact/sorensonimpact")
 ```
 
-```{r}
+```{r, class.source = 'fold-hide'}
 # Function to detect binary variables
 is_binary <- function(x) {
   x0 <- na.omit(x)
@@ -59,29 +60,29 @@ kable_format <- function(x, digits = 1, caption = NULL, position = "center") {
 }  
 ```
 
-
 # Data
 ```{r, message=FALSE}
-train_raw <- read_csv("Kaggle/train.csv") # %>% 
-# mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
+train_raw <- read_csv("train.csv") %>% 
+  mutate(ID = as_factor(ID)) # %>% 
+  # mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
 
 train <- train_raw # For analysis
 
-test <- read_csv("Kaggle/test.csv") # %>% 
+test <- read_csv("test.csv") # %>% 
 # mutate(across(where(is_binary), ~ factor(., levels = 0:1)))
 ```
 
 ## First look
-```{r)
-summarise(train, digits = 1, sep = TRUE, count = FALSE) %>% kable_format()
-```
-We can see that `farmer` is always zero, so it'll be dropped in the recipe.
 
-```{r}
-train %>% filter(edyrs==0) %>% kable_format()
+```{r, message=FALSE}
+summarise(train, type = "numeric", count = FALSE) %>% kable_format(digits = 2)
 ```
 
-There is one observation with `edyrs==0`. He is Hispanic, male, construction worker. Should we drop it?
+We can observe some immediate details from this summary:
+
+* The feature `farmer` is always zero, so it'll be dropped in the recipe.
+* There are several very sparse dummies in the race and occupation features. We might want to unite some of them.
+* The min value of `edyrs` is 0, which seems strange and a potential outlier.
 
 ## Creating features for exploration
 ```{r}
@@ -89,9 +90,10 @@ There is one observation with `edyrs==0`. He is Hispanic, male, construction wor
 train <- train %>% 
   mutate(in_school = as_factor(if_else(edyrs %in% c(13:15, 17), 1, 0)),
          educ = fct_case_when(
-           edyrs <= 12   ~ "high school",
+           edyrs < 12          ~ "non-graduate",
+           edyrs == 12         ~ "high school",
            edyrs %in% c(13:16) ~ "college",
-           edyrs > 16  ~ "advanced"),
+           edyrs > 16          ~ "advanced"),
          region = case_when(
            northeast==1    ~ "northeast",
            northcentral==1 ~ "northcentral",
@@ -105,7 +107,8 @@ train <- train %>%
          )
 
 # Dummies and others
-train <- train %>% mutate(total_exp = expf + expp,
+train <- train %>% mutate(total_exp = expf + 0.5*expp,
+                          total_expsq = total_exp^2,
                           non_graduate = if_else(edyrs<12, 1, 0),
                           high_school = if_else(edyrs>=12, 1, 0), # maybe between 12 and 16?
                           white = if_else(black==0 & hisp==0 & otherrace==0, 1, 0),
@@ -123,9 +126,18 @@ train %>% ggplot(aes(edyrs)) +
   geom_histogram(binwidth = 1)
 ```
 
-We can see that there's a relatively significant concentration at the value of 12 and 16, which represent finishing high school and college, respectively. We don't think there's important information between the values below 12, so we'll replace this feature with a dummy for finishing high school. 
+We can see that there's a relatively significant concentration at the value of 12, 16 and 18, which represent finishing high school, college or an advanced degree, respectively. 
 
-The values of 13-15 and 17 can imply for students. We can check their experience and see if it makes sense:
+```{r}
+train %>% filter(edyrs!=0) %>% 
+  ggplot(aes(x = edyrs, y = lnwage))+
+  geom_jitter() + 
+  geom_smooth() 
+```
+
+We see that there's a shift for additional education after high school, but we don't think there's important information between the values below it, so we'll add a dummy for not/finishing high school. 
+
+The values of 13-15 and 17 could imply for students, although our sample includes people aged 25-65. We can still check their experience and see if it makes sense:
 ```{r}
 train %>% 
   filter(edyrs %in% c(13:15, 17)) %>% 
@@ -135,9 +147,17 @@ train %>%
 
 We can't conclude that these are students, maybe dropouts?
 
-## Occupation
+Now we address the min value of `edyrs` which we mentioned earlier:
 
 ```{r}
+train %>% filter(edyrs==0) %>% kable_format() %>% scroll_box(width = "100%")
+```
+
+There is one observation with `edyrs==0`. He is Hispanic, male, construction worker. Should we drop it?
+
+## Occupation
+
+```{r, fig.height=10}
 occupations <- c("manager", "business", "financialop", "computer", "architect", "scientist", "socialworker", "postseceduc", "legaleduc", "artist", "lawyerphysician", "healthcare", "healthsupport", "protective", "foodcare", "building", "sales", "officeadmin", "constructextractinstall", "production", "transport")
 
 
@@ -151,461 +171,492 @@ train <- train %>%
 
 train$occupation <- factor(train$occupation, labels = occupations)
 
-# Checking lnwage by occupation
-train %>% 
-  group_by(occupation) %>%
-  dplyr::summarise(N = n(),
-                   mean = mean(lnwage),
-                   sd = sd(lnwage)) %>%
-  arrange(desc(mean)) %>% 
-  kable_format()
+n_occ <- train %>% count(occupation)
 
-# Boxplot
-train %>% filter(!(occupation=="artist" & lnwage>4)) %>% ggplot(aes(x = reorder(occupation, lnwage, FUN = median), y = lnwage, fill = as_factor(occupation))) +
+# lnwage boxplot
+wage_occ_boxplot <- train %>% 
+  ggplot(aes(x = reorder(occupation, lnwage, FUN = median), y = lnwage, fill = as_factor(occupation))) +
   stat_boxplot(geom = "errorbar") +
   geom_boxplot() +
-  theme(legend.position = "hide", axis.text.x = element_text(size=8, angle=45)) 
+  geom_text(data = n_occ, aes(x =occupation, y = 1, label = paste0("N=",n)), size = 3, angle = 30) +
+  ggtitle("Income") +
+  theme(legend.position = "hide",
+        axis.text.x = element_text(size=8, angle=45),
+        axis.title.x = element_blank()) 
 
-# Checking mean edyrs by occupation
-train %>% 
-  group_by(occupation) %>%
-  dplyr::summarise(N = n(),
-                   mean = mean(edyrs),
-                   sd = sd(edyrs)) %>%
-  arrange(desc(mean)) %>% 
-  kable_format()
-
-# Boxplot
-train %>% ggplot(aes(x = reorder(occupation, edyrs, FUN = median), y = edyrs, fill = as_factor(occupation))) +
+# edyrs boxplot
+edu_occ_boxplot <- train %>% ggplot(aes(x = reorder(occupation, edyrs, FUN = median), y = edyrs, fill = as_factor(occupation))) +
   stat_boxplot(geom = "errorbar") +
   geom_boxplot() +
-  theme(legend.position = "hide", axis.text.x = element_text(size=8, angle=45)) 
+  geom_text(data = n_occ, aes(x =occupation, y = 2, label = paste0("N=",n)), size = 3, angle = 30) +
+  ggtitle("Education") +
+  theme(legend.position = "hide", 
+        axis.text.x = element_text(size=8, angle=45),
+        axis.title.x = element_blank())
 
+grid.arrange(wage_occ_boxplot, edu_occ_boxplot)
 ```
 
-We can see that:
-* There's a large variance in `manager`, `sales`, `officeadmin`, `production`, `transport`
+* We see that there's a difference in the median income and education between occupations, and that these stats are in large correlated for each occupation. We can see the the pink-purple occupations are on the left and that the green-browns are on the right, in both plots. Therefore, we might unite them to groups which capture these differences.
 
-## Some trials...
+* For some occupation these stats are quite volatile, which might suggest they are not representative for these specific occupations.
+
+* There are some extreme outliers, such as in `artist`'s income. and `legaleduc`'s education. We might consider dropping them.
+
+* Again, we see the sparse variables:
+`artist`, `computer`, `financialop`, `business`, `postseceduc`, `lawyerphysician`, `socialworker`, `scientist` and `protective`. We should unite them with other variables which might represent similar people.
+
+
+## Regions
 ```{r}
-train %>% 
-  ggplot(aes(x = region, y = lnwage, fill = as_factor(female))) +
+n_region <- train %>% count(region)
+
+region_lnwage_boxplot <- train %>% 
+  ggplot(aes(x = region, y = lnwage, fill = as_factor(region))) +
   stat_boxplot(geom = "errorbar") +
-  geom_boxplot() 
+  geom_boxplot() +
+  geom_text(data = n_region, aes(x = region, y = 1, label = paste0("N=",n)), size = 4) +
+  ggtitle("Income") +
+  theme(legend.position = "hide",
+        axis.title.x = element_blank()) 
 
-train %>% 
-  ggplot(aes(x = race, y = lnwage, fill = as_factor(female))) +
+region_edyrs_boxplot <- train %>% 
+  ggplot(aes(x = region, y = edyrs, fill = as_factor(region))) +
   stat_boxplot(geom = "errorbar") +
-  geom_boxplot() 
+  geom_boxplot() +
+  geom_text(data = n_region, aes(x = region, y = 1, label = paste0("N=",n)), size = 4) +
+  ggtitle("Education") +
+  theme(legend.position = "hide",
+        axis.title.x = element_blank())   
 
-train %>% 
-  ggplot(aes(x = educ, y = lnwage, fill = as_factor(female))) +
+grid.arrange(region_lnwage_boxplot, region_edyrs_boxplot, ncol = 2)
+```
+
+We can see that the south is distinct from the other regions, which are quite similar. Maybe keeping only the `south` feature would be more informative.
+
+## Race
+```{r}
+n_race <- train %>% count(race)
+
+race_lnwage_boxplot <- train %>% 
+  ggplot(aes(x = race, y = lnwage, fill = race)) +
   stat_boxplot(geom = "errorbar") +
-  geom_boxplot() 
+  geom_boxplot() +
+  geom_text(data = n_race, aes(x = race, y = 1, label = paste0("N=",n)), size = 4) +
+  ggtitle("Income") +
+  theme(legend.position = "hide",
+        axis.title.x = element_blank())   
 
-train %>% 
-  filter(edyrs<=12) %>% 
-  ggplot(aes(x = edyrs, y = lnwage))+
-  geom_jitter() + 
-  geom_smooth()
-```
-The south might be poorer then the rest.
+race_educ_boxplot <- train %>% 
+  ggplot(aes(x = race, y = edyrs, fill = race)) +
+  stat_boxplot(geom = "errorbar") +
+  geom_boxplot() +
+  geom_text(data = n_race, aes(x = race, y = 1, label = paste0("N=",n)), size = 4) +
+  ggtitle("Education") +
+  theme(legend.position = "hide",
+        axis.title.x = element_blank())  
 
-
-```{r}
-p_load(rpart)
-p_load(rpart.plot)
-
-tree_fit <- rpart(formula = lnwage ~ .,
-                  data = train[,-1],
-                  method = "anova",
-                  control = rpart.control(minsplit = 2, minbucket = 1)
-)
-
-rpart.plot(tree_fit, roundint = FALSE)
-
+grid.arrange(race_lnwage_boxplot, race_educ_boxplot, ncol = 2)
 ```
 
-## Correlation - didn't use it
-```{r}
-# A function for filtering low values from correlation matrix
-corr_simple <- function(data=df,sig=0.5){
-  # Run a correlation and drop the insignificant ones
-  corr <- cor(data)
-  #prepare to drop duplicates and correlations of 1     
-  corr[lower.tri(corr,diag=TRUE)] <- NA 
-  # Drop perfect correlations
-  corr[corr == 1] <- NA 
-  # Turn into a 3-column table
-  corr <- as.data.frame(as.table(corr))
-  # Remove the NA values from above 
-  corr <- na.omit(corr) 
-  # Select significant values  
-  corr <- subset(corr, abs(Freq) > sig) 
-  # Sort by highest correlation
-  corr <- corr[order(-abs(corr$Freq)),] 
-  # Print table
-  print(corr)
-  # Turn corr back into matrix in order to plot with corrplot
-  mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq")
-  
-  # Plot correlations visually
-  corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", method = "number", type = "upper")
-}
-
-# Preparing data
-train_numeric <- recipe(lnwage ~ ., data = train) %>% 
-  update_role(ID, new_role = "ID") %>% 
-  step_rm(occupation, region, race, educ) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  step_zv(all_predictors()) %>% 
-  prep() %>% bake(train)
-
-# Plot
-corr_simple(train_numeric, sig = 0.5)
-
-```
-
-# Modelling
-```{r}
-# Cross validation folds
-cv_folds <- train %>% 
-  vfold_cv(v = 5) # can also add repeats and strata
-
-# For stacking
-ctrl_grid <- control_stack_grid()
-
-# Base recipe (data processing)
-train_rec <- recipe(lnwage ~ ., data = train) %>% 
-  update_role(ID, new_role = "ID") %>% 
-  step_normalize(c(expp, exppsq, expf, expfsq, edyrs, total_exp)) %>% 
-  step_rm(c(occupation, region, race, otherrace, educ)) %>% 
-  # step_rm(occupation, occupations, region, race, educ, otherrace) %>% 
-  step_dummy(all_nominal_predictors()) %>% 
-  # step_interact(~ c(black ,female):all_predictors()) %>% 
-  step_zv(all_predictors()) %>% 
-  step_corr(all_predictors(), threshold = 0.9)
-
-new <- train_rec %>% prep() %>% bake(train)
-
-```
-
-## LASSO
-```{r}
-# Model definition
-lasso_model <- 
-  linear_reg(penalty = tune(), mixture = 1) %>% 
-    set_engine("glmnet") %>% 
-    set_mode("regression")
-
-# Define parameters for tuning
-lasso_grid <- grid_regular(penalty(), levels = 50)
-
-# Combine models and workflow
-lasso_wf <- workflow() %>% 
-  add_recipe(train_rec) %>% 
-  add_model(lasso_model)
-
-# Tune parameters
-lasso_results <- lasso_wf %>% 
-  tune_grid(grid = lasso_grid,
-            resamples = cv_folds,
-            control = ctrl_grid)
-
-lasso_results %>% show_best(metric = "rmse") %>% kable_format(digits = 3)
-
-# Visualize results
-lasso_results %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>% 
-    ggplot(aes(penalty, mean)) +
-      geom_errorbar(aes(
-        ymin = mean - std_err,
-        ymax = mean + std_err)
-        ) +
-      geom_line(size = 1.5) +
-      scale_x_log10() +
-      theme(legend.position = "none")
-
-# Select best model
-lasso_best <- lasso_results %>% 
-select_best(metric = "rmse")
-
-lambda_1se <- lasso_results %>% 
-  select_by_one_std_err(
-    metric = "rmse",
-    desc(penalty)
-  ) %>% 
-  select(penalty)
-
-# Finalize workflow
-lasso_final <- finalize_workflow(lasso_wf, lasso_best)
-lasso_model_final <- finalize_model(lasso_model, lasso_best)
-lasso_final_fit <- fit(lasso_model_final, lnwage ~ ., data = train)
-
-# Variable importance
-lasso_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col")
-
-```
-
-## Enhancing performance for trees
-```{r}
-cores <- parallel::detectCores(logical = FALSE)
-registerDoParallel(cores = cores)
-```
-
-## Random Forests
-```{r}
-# Define model
-rf_model <- 
-  rand_forest(mtry = tune(), 
-              trees = tune(),
-              min_n = tune()
-              ) %>% 
-  set_engine("randomForest") %>% 
-  set_mode("regression")
-
-# Define parameters for tuning
-rf_grid <- grid_latin_hypercube(
-  mtry(c(1L,15L)), 
-  trees(c(500L, 1800L)),
-  min_n(c(5L, 20L)),
-  size = 30
-  )
-
-# Combine model and recipe
-rf_wf <- 
-  workflow() %>% 
-  add_recipe(train_rec) %>% 
-  add_model(rf_model)
-
-# Tune parameters
-rf_results <- 
-  tune_grid(rf_wf,
-            resamples = cv_folds,
-            grid = rf_grid,
-            control = ctrl_grid
-            )
-
-# Evaluate tuning results
-show_best(rf_results, "rmse", n = 5) %>% kable_format(digits = 3)
-
-# Visualize results
-rf_results %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, mtry:min_n) %>%
-  pivot_longer(mtry:min_n,
-               values_to = "value",
-               names_to = "parameter"
-               ) %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(alpha = 0.8, show.legend = FALSE) +
-  facet_wrap(~parameter, scales = "free_x") +
-  labs(x = NULL, y = "rmse")
-
-# Select best model
-rf_best <- select_best(rf_results, metric = "rmse")
-# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
-# rf_1std <- select_by_one_std_err(rf_results, mtry, trees, min_n, metric = "rmse")
-
-# Finalize workflow
-rf_final <- finalize_workflow(rf_wf, rf_best)
-rf_model_final <- finalize_model(rf_model, rf_best)
-rf_final_fit <- fit(rf_model_final, lnwage ~ ., data = train)
-
-# Variable importance
-rf_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col")
-  
-  
-```
-
-## XGBoost
-```{r}
-# Define model
-xgb_model <- 
-  boost_tree(mtry = tune(),           # number of predictors to choose from at each split (for randomness)
-             trees = tune(),          # number of trees (complexity)
-             min_n = tune(),          # minimum obs in a node (complexity)
-             tree_depth = tune(),     # max number of split (complexity)
-             learn_rate = tune(),     # step size
-             loss_reduction = tune(), # the reduction in the loss function required to split further
-             sample_size = tune()   # fraction of data in each round (for randomness)
-            ) %>%
-  set_mode("regression") %>% 
-  set_engine("xgboost", objective = "reg:squarederror")
-  
-# Define parameters for tuning
-xgb_grid <- grid_latin_hypercube(
-  mtry(c(3L, 40L)),
-  trees(c(500L, 1300)),
-  min_n(c(15L, 80L)),
-  tree_depth(c(1L, 7L)),
-  learn_rate(c(-2, -1)),
-  loss_reduction(c(-10, -2)),
-  sample_size = sample_prop(c(0.6, 0.8)),
-  size = 30
-  )
-
-# Combine model and recipe
-xgb_wf <- 
-workflow() %>% 
-add_recipe(train_rec) %>% 
-add_model(xgb_model)
-
-# Tune parameters
-xgb_results <- 
-tune_grid(xgb_wf,
-          resamples = cv_folds,
-          grid = xgb_grid,
-          control = ctrl_grid
-          )
-
-# Evaluate tuning results
-show_best(xgb_results, "rmse", n = 5) %>% kable_format(digits = 3)
-
-# Visualize results
-xgb_results %>%
-collect_metrics() %>%
-filter(.metric == "rmse") %>%
-select(mean, mtry:sample_size) %>%
-pivot_longer(mtry:sample_size,
-             values_to = "value",
-             names_to = "parameter"
-             ) %>%
-ggplot(aes(value, mean, color = parameter)) +
-geom_point(alpha = 0.8, show.legend = FALSE) +
-facet_wrap(~parameter, scales = "free_x") +
-labs(x = NULL, y = "rmse")
-
-# Select best model
-xgb_best <- select_best(xgb_results, metric = "rmse")
-# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
-# xgb_1std <- select_by_one_std_err(xgb_results, mtry, tree_depth, trees, min_n, 
-#                       metric = "rmse")
-
-# Finalize workflow
-xgb_final <- finalize_workflow(xgb_wf, xgb_best)
-xgb_model_final <- finalize_model(xgb_model, xgb_best)
-xgb_final_fit <- fit(xgb_model_final, lnwage ~ ., data = train)
-
-# Variable importance
-xgb_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col")
+Here we can distinguish between `black` + `hisp` and `white` + `otherrace`. We should replace the current race features with that division.
 
 
-```
 
-## Stacking models
-```{r}
-stack <-
-  stacks() %>% 
-  add_candidates(lasso_results) %>% 
-  add_candidates(rf_results) %>% 
-  add_candidates(xgb_results)
+<!-- ```{r} -->
+<!-- p_load(rpart) -->
+<!-- p_load(rpart.plot) -->
 
-stack_model <- 
-  stack %>% 
-  blend_predictions()
+<!-- tree_fit <- rpart(formula = lnwage ~ ., -->
+<!--                   data = train[,-1], -->
+<!--                   method = "anova", -->
+<!--                   control = rpart.control(minsplit = 2, minbucket = 1) -->
+<!-- ) -->
 
-autoplot(stack_model)
-autoplot(stack_model, type = "members")
-autoplot(stack_model, type = "weights")
+<!-- rpart.plot(tree_fit, roundint = FALSE) -->
 
-stack_model <- stack_model %>% fit_members()
+<!-- ``` -->
 
-```
+<!-- ## Correlation - didn't use it -->
+<!-- ```{r} -->
+<!-- # A function for filtering low values from correlation matrix -->
+<!-- corr_simple <- function(data=df,sig=0.5){ -->
+<!--   # Run a correlation and drop the insignificant ones -->
+<!--   corr <- cor(data) -->
+<!--   #prepare to drop duplicates and correlations of 1      -->
+<!--   corr[lower.tri(corr,diag=TRUE)] <- NA  -->
+<!--   # Drop perfect correlations -->
+<!--   corr[corr == 1] <- NA  -->
+<!--   # Turn into a 3-column table -->
+<!--   corr <- as.data.frame(as.table(corr)) -->
+<!--   # Remove the NA values from above  -->
+<!--   corr <- na.omit(corr)  -->
+<!--   # Select significant values   -->
+<!--   corr <- subset(corr, abs(Freq) > sig)  -->
+<!--   # Sort by highest correlation -->
+<!--   corr <- corr[order(-abs(corr$Freq)),]  -->
+<!--   # Print table -->
+<!--   print(corr) -->
+<!--   # Turn corr back into matrix in order to plot with corrplot -->
+<!--   mtx_corr <- reshape2::acast(corr, Var1~Var2, value.var="Freq") -->
+
+<!--   # Plot correlations visually -->
+<!--   corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", method = "number", type = "upper") -->
+<!-- } -->
+
+<!-- # Preparing data -->
+<!-- train_numeric <- recipe(lnwage ~ ., data = train) %>%  -->
+<!--   update_role(ID, new_role = "ID") %>%  -->
+<!--   step_rm(occupation, region, race, educ) %>%  -->
+<!--   step_dummy(all_nominal_predictors()) %>%  -->
+<!--   step_zv(all_predictors()) %>%  -->
+<!--   prep() %>% bake(train) -->
+
+<!-- # Plot -->
+<!-- corr_simple(train_numeric, sig = 0.5) -->
+
+<!-- ``` -->
+
+<!-- # Modelling -->
+<!-- ```{r} -->
+<!-- # Cross validation folds -->
+<!-- cv_folds <- train %>%  -->
+<!--   vfold_cv(v = 5) # can also add repeats and strata -->
+
+<!-- # For stacking -->
+<!-- ctrl_grid <- control_stack_grid() -->
+
+<!-- # Base recipe (data processing) -->
+<!-- train_rec <- recipe(lnwage ~ ., data = train) %>%  -->
+<!--   update_role(ID, new_role = "ID") %>%  -->
+<!--   step_normalize(c(expp, exppsq, expf, expfsq, edyrs, total_exp)) %>%  -->
+<!--   step_rm(c(occupation, region, race, otherrace, educ)) %>%  -->
+<!--   # step_rm(occupation, occupations, region, race, educ, otherrace) %>%  -->
+<!--   step_dummy(all_nominal_predictors()) %>%  -->
+<!--   # step_interact(~ c(black ,female):all_predictors()) %>%  -->
+<!--   step_zv(all_predictors()) %>%  -->
+<!--   step_corr(all_predictors(), threshold = 0.9) -->
+
+<!-- new <- train_rec %>% prep() %>% bake(train) -->
+
+<!-- ``` -->
+
+<!-- ## LASSO -->
+<!-- ```{r} -->
+<!-- # Model definition -->
+<!-- lasso_model <-  -->
+<!--   linear_reg(penalty = tune(), mixture = 1) %>%  -->
+<!--     set_engine("glmnet") %>%  -->
+<!--     set_mode("regression") -->
+
+<!-- # Define parameters for tuning -->
+<!-- lasso_grid <- grid_regular(penalty(), levels = 50) -->
+
+<!-- # Combine models and workflow -->
+<!-- lasso_wf <- workflow() %>%  -->
+<!--   add_recipe(train_rec) %>%  -->
+<!--   add_model(lasso_model) -->
+
+<!-- # Tune parameters -->
+<!-- lasso_results <- lasso_wf %>%  -->
+<!--   tune_grid(grid = lasso_grid, -->
+<!--             resamples = cv_folds, -->
+<!--             control = ctrl_grid) -->
+
+<!-- lasso_results %>% show_best(metric = "rmse") %>% kable_format(digits = 3) -->
+
+<!-- # Visualize results -->
+<!-- lasso_results %>%  -->
+<!--   collect_metrics() %>% -->
+<!--   filter(.metric == "rmse") %>%  -->
+<!--     ggplot(aes(penalty, mean)) + -->
+<!--       geom_errorbar(aes( -->
+<!--         ymin = mean - std_err, -->
+<!--         ymax = mean + std_err) -->
+<!--         ) + -->
+<!--       geom_line(size = 1.5) + -->
+<!--       scale_x_log10() + -->
+<!--       theme(legend.position = "none") -->
+
+<!-- # Select best model -->
+<!-- lasso_best <- lasso_results %>%  -->
+<!-- select_best(metric = "rmse") -->
+
+<!-- lambda_1se <- lasso_results %>%  -->
+<!--   select_by_one_std_err( -->
+<!--     metric = "rmse", -->
+<!--     desc(penalty) -->
+<!--   ) %>%  -->
+<!--   select(penalty) -->
+
+<!-- # Finalize workflow -->
+<!-- lasso_final <- finalize_workflow(lasso_wf, lasso_best) -->
+<!-- lasso_model_final <- finalize_model(lasso_model, lasso_best) -->
+<!-- lasso_final_fit <- fit(lasso_model_final, lnwage ~ ., data = train) -->
+
+<!-- # Variable importance -->
+<!-- lasso_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col") -->
+
+<!-- ``` -->
+
+<!-- ## Enhancing performance for trees -->
+<!-- ```{r} -->
+<!-- cores <- parallel::detectCores(logical = FALSE) -->
+<!-- registerDoParallel(cores = cores) -->
+<!-- ``` -->
+
+<!-- ## Random Forests -->
+<!-- ```{r} -->
+<!-- # Define model -->
+<!-- rf_model <-  -->
+<!--   rand_forest(mtry = tune(),  -->
+<!--               trees = tune(), -->
+<!--               min_n = tune() -->
+<!--               ) %>%  -->
+<!--   set_engine("randomForest") %>%  -->
+<!--   set_mode("regression") -->
+
+<!-- # Define parameters for tuning -->
+<!-- rf_grid <- grid_latin_hypercube( -->
+<!--   mtry(c(1L,15L)),  -->
+<!--   trees(c(500L, 1800L)), -->
+<!--   min_n(c(5L, 20L)), -->
+<!--   size = 30 -->
+<!--   ) -->
+
+<!-- # Combine model and recipe -->
+<!-- rf_wf <-  -->
+<!--   workflow() %>%  -->
+<!--   add_recipe(train_rec) %>%  -->
+<!--   add_model(rf_model) -->
+
+<!-- # Tune parameters -->
+<!-- rf_results <-  -->
+<!--   tune_grid(rf_wf, -->
+<!--             resamples = cv_folds, -->
+<!--             grid = rf_grid, -->
+<!--             control = ctrl_grid -->
+<!--             ) -->
+
+<!-- # Evaluate tuning results -->
+<!-- show_best(rf_results, "rmse", n = 5) %>% kable_format(digits = 3) -->
+
+<!-- # Visualize results -->
+<!-- rf_results %>% -->
+<!--   collect_metrics() %>% -->
+<!--   filter(.metric == "rmse") %>% -->
+<!--   select(mean, mtry:min_n) %>% -->
+<!--   pivot_longer(mtry:min_n, -->
+<!--                values_to = "value", -->
+<!--                names_to = "parameter" -->
+<!--                ) %>% -->
+<!--   ggplot(aes(value, mean, color = parameter)) + -->
+<!--   geom_point(alpha = 0.8, show.legend = FALSE) + -->
+<!--   facet_wrap(~parameter, scales = "free_x") + -->
+<!--   labs(x = NULL, y = "rmse") -->
+
+<!-- # Select best model -->
+<!-- rf_best <- select_best(rf_results, metric = "rmse") -->
+<!-- # Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?) -->
+<!-- # rf_1std <- select_by_one_std_err(rf_results, mtry, trees, min_n, metric = "rmse") -->
+
+<!-- # Finalize workflow -->
+<!-- rf_final <- finalize_workflow(rf_wf, rf_best) -->
+<!-- rf_model_final <- finalize_model(rf_model, rf_best) -->
+<!-- rf_final_fit <- fit(rf_model_final, lnwage ~ ., data = train) -->
+
+<!-- # Variable importance -->
+<!-- rf_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col") -->
 
 
-# Predictions
-```{r}
-lasso_pred <- 
-    predict(lasso_final_fit, new_data = test) %>% 
-    bind_cols(select(test, ID))
+<!-- ``` -->
 
-rf_pred <- 
-    predict(rf_final_fit, new_data = test) %>% 
-    bind_cols(select(test, ID))
+<!-- ## XGBoost -->
+<!-- ```{r} -->
+<!-- # Define model -->
+<!-- xgb_model <-  -->
+<!--   boost_tree(mtry = tune(),           # number of predictors to choose from at each split (for randomness) -->
+<!--              trees = tune(),          # number of trees (complexity) -->
+<!--              min_n = tune(),          # minimum obs in a node (complexity) -->
+<!--              tree_depth = tune(),     # max number of split (complexity) -->
+<!--              learn_rate = tune(),     # step size -->
+<!--              loss_reduction = tune(), # the reduction in the loss function required to split further -->
+<!--              sample_size = tune()   # fraction of data in each round (for randomness) -->
+<!--             ) %>% -->
+<!--   set_mode("regression") %>%  -->
+<!--   set_engine("xgboost", objective = "reg:squarederror") -->
 
-xgb_pred <- 
-    predict(xgb_final_fit, new_data = test) %>% 
-    bind_cols(select(test, ID))
+<!-- # Define parameters for tuning -->
+<!-- xgb_grid <- grid_latin_hypercube( -->
+<!--   mtry(c(3L, 40L)), -->
+<!--   trees(c(500L, 1300)), -->
+<!--   min_n(c(15L, 80L)), -->
+<!--   tree_depth(c(1L, 7L)), -->
+<!--   learn_rate(c(-2, -1)), -->
+<!--   loss_reduction(c(-10, -2)), -->
+<!--   sample_size = sample_prop(c(0.6, 0.8)), -->
+<!--   size = 30 -->
+<!--   ) -->
 
-stack_pred <-
-  predict(stack_model, new_data = test) %>% 
-  bind_cols(select(test, ID))
+<!-- # Combine model and recipe -->
+<!-- xgb_wf <-  -->
+<!-- workflow() %>%  -->
+<!-- add_recipe(train_rec) %>%  -->
+<!-- add_model(xgb_model) -->
+
+<!-- # Tune parameters -->
+<!-- xgb_results <-  -->
+<!-- tune_grid(xgb_wf, -->
+<!--           resamples = cv_folds, -->
+<!--           grid = xgb_grid, -->
+<!--           control = ctrl_grid -->
+<!--           ) -->
+
+<!-- # Evaluate tuning results -->
+<!-- show_best(xgb_results, "rmse", n = 5) %>% kable_format(digits = 3) -->
+
+<!-- # Visualize results -->
+<!-- xgb_results %>% -->
+<!-- collect_metrics() %>% -->
+<!-- filter(.metric == "rmse") %>% -->
+<!-- select(mean, mtry:sample_size) %>% -->
+<!-- pivot_longer(mtry:sample_size, -->
+<!--              values_to = "value", -->
+<!--              names_to = "parameter" -->
+<!--              ) %>% -->
+<!-- ggplot(aes(value, mean, color = parameter)) + -->
+<!-- geom_point(alpha = 0.8, show.legend = FALSE) + -->
+<!-- facet_wrap(~parameter, scales = "free_x") + -->
+<!-- labs(x = NULL, y = "rmse") -->
+
+<!-- # Select best model -->
+<!-- xgb_best <- select_best(xgb_results, metric = "rmse") -->
+<!-- # Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?) -->
+<!-- # xgb_1std <- select_by_one_std_err(xgb_results, mtry, tree_depth, trees, min_n,  -->
+<!-- #                       metric = "rmse") -->
+
+<!-- # Finalize workflow -->
+<!-- xgb_final <- finalize_workflow(xgb_wf, xgb_best) -->
+<!-- xgb_model_final <- finalize_model(xgb_model, xgb_best) -->
+<!-- xgb_final_fit <- fit(xgb_model_final, lnwage ~ ., data = train) -->
+
+<!-- # Variable importance -->
+<!-- xgb_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col") -->
 
 
-```
+<!-- ``` -->
+
+<!-- ## Stacking models -->
+<!-- ```{r} -->
+<!-- stack <- -->
+<!--   stacks() %>%  -->
+<!--   add_candidates(lasso_results) %>%  -->
+<!--   add_candidates(rf_results) %>%  -->
+<!--   add_candidates(xgb_results) -->
+
+<!-- stack_model <-  -->
+<!--   stack %>%  -->
+<!--   blend_predictions() -->
+
+<!-- autoplot(stack_model) -->
+<!-- autoplot(stack_model, type = "members") -->
+<!-- autoplot(stack_model, type = "weights") -->
+
+<!-- stack_model <- stack_model %>% fit_members() -->
+
+<!-- ``` -->
 
 
-# Submission
-```{r}
-# write_csv(final_prediction, "submission.csv")
+<!-- # Predictions -->
+<!-- ```{r} -->
+<!-- lasso_pred <-  -->
+<!--     predict(lasso_final_fit, new_data = test) %>%  -->
+<!--     bind_cols(select(test, ID)) -->
 
-```
+<!-- rf_pred <-  -->
+<!--     predict(rf_final_fit, new_data = test) %>%  -->
+<!--     bind_cols(select(test, ID)) -->
 
-# caret workflow
-```{r}
-# registerDoParallel(4)
-# 
-# set.seed(1)
-# 
-# # Cross-validation and performance
-# control <- trainControl(method = "cv",
-#                         number = 5, 
-#                         savePredictions = "final",
-#                         allowParallel = TRUE)
-# 
-# methods <- c("lm", "rf", "gbm", "xgbTree", "xgbLinear")
-# 
-# model_list <- caretList(lnwage ~ ., data = train,
-#                         trControl = control,
-#                         methodList = methods,
-#                         tuneList = NULL,
-#                         continue_on_fail = FALSE, 
-#                         preProcess = c("center","scale"))
-# 
-# for (i in model_list) {
-#   print(i)
-# }
-# 
-# model_results <- data.frame(
-#  lm = min(model_list$lm$results$RMSE),
-#  rf = min(model_list$rf$results$RMSE),
-#  gbm = min(model_list$gbm$results$RMSE),
-#  xgbTree = min(model_list$xgbTree$results$RMSE),
-#  xgbLinear = min(model_list$xgbLinear$results$RMSE)
-#  )
-# print(model_results)
-# 
-# resamples <- resamples(model_list)
-# dotplot(resamples, metric = "RMSE")
-# 
-# modelCor(resamples)
-# 
-# ensemble_1 <- caretEnsemble(model_list, 
-#                             metric = "RMSE", 
-#                             trControl = control)
-# summary(ensemble_1)
-# plot(ensemble_1)
-# 
-# for (i in model_list) {
-#   pred <- predict.train(i, newdata = test) %>% 
-#     as_tibble() %>% 
-#     bind_cols(test) %>% 
-#     select(value, ID) %>% 
-#     rename(pred = value)
-#   
-#   assign(paste0(i,"_pred"), pred)
-# }
-# rm(pred)
-# 
-# predict_ens1 <- predict(ensemble_1, newdata = test) %>% 
-#     as_tibble() %>% 
-#     bind_cols(test) %>% 
-#     select(value, ID) %>% 
-#     rename(pred = value)
-# 
+<!-- xgb_pred <-  -->
+<!--     predict(xgb_final_fit, new_data = test) %>%  -->
+<!--     bind_cols(select(test, ID)) -->
 
-```
+<!-- stack_pred <- -->
+<!--   predict(stack_model, new_data = test) %>%  -->
+<!--   bind_cols(select(test, ID)) -->
+
+
+<!-- ``` -->
+
+
+<!-- # Submission -->
+<!-- ```{r} -->
+<!-- # write_csv(final_prediction, "submission.csv") -->
+
+<!-- ``` -->
+
+<!-- # caret workflow -->
+<!-- ```{r} -->
+<!-- # registerDoParallel(4) -->
+<!-- #  -->
+<!-- # set.seed(1) -->
+<!-- #  -->
+<!-- # # Cross-validation and performance -->
+<!-- # control <- trainControl(method = "cv", -->
+<!-- #                         number = 5,  -->
+<!-- #                         savePredictions = "final", -->
+<!-- #                         allowParallel = TRUE) -->
+<!-- #  -->
+<!-- # methods <- c("lm", "rf", "gbm", "xgbTree", "xgbLinear") -->
+<!-- #  -->
+<!-- # model_list <- caretList(lnwage ~ ., data = train, -->
+<!-- #                         trControl = control, -->
+<!-- #                         methodList = methods, -->
+<!-- #                         tuneList = NULL, -->
+<!-- #                         continue_on_fail = FALSE,  -->
+<!-- #                         preProcess = c("center","scale")) -->
+<!-- #  -->
+<!-- # for (i in model_list) { -->
+<!-- #   print(i) -->
+<!-- # } -->
+<!-- #  -->
+<!-- # model_results <- data.frame( -->
+<!-- #  lm = min(model_list$lm$results$RMSE), -->
+<!-- #  rf = min(model_list$rf$results$RMSE), -->
+<!-- #  gbm = min(model_list$gbm$results$RMSE), -->
+<!-- #  xgbTree = min(model_list$xgbTree$results$RMSE), -->
+<!-- #  xgbLinear = min(model_list$xgbLinear$results$RMSE) -->
+<!-- #  ) -->
+<!-- # print(model_results) -->
+<!-- #  -->
+<!-- # resamples <- resamples(model_list) -->
+<!-- # dotplot(resamples, metric = "RMSE") -->
+<!-- #  -->
+<!-- # modelCor(resamples) -->
+<!-- #  -->
+<!-- # ensemble_1 <- caretEnsemble(model_list,  -->
+<!-- #                             metric = "RMSE",  -->
+<!-- #                             trControl = control) -->
+<!-- # summary(ensemble_1) -->
+<!-- # plot(ensemble_1) -->
+<!-- #  -->
+<!-- # for (i in model_list) { -->
+<!-- #   pred <- predict.train(i, newdata = test) %>%  -->
+<!-- #     as_tibble() %>%  -->
+<!-- #     bind_cols(test) %>%  -->
+<!-- #     select(value, ID) %>%  -->
+<!-- #     rename(pred = value) -->
+<!-- #    -->
+<!-- #   assign(paste0(i,"_pred"), pred) -->
+<!-- # } -->
+<!-- # rm(pred) -->
+<!-- #  -->
+<!-- # predict_ens1 <- predict(ensemble_1, newdata = test) %>%  -->
+<!-- #     as_tibble() %>%  -->
+<!-- #     bind_cols(test) %>%  -->
+<!-- #     select(value, ID) %>%  -->
+<!-- #     rename(pred = value) -->
+<!-- #  -->
+
+<!-- ``` -->
 
