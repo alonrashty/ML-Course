@@ -11,3 +11,4 @@
 
 * [Problem Set 5: Text Mining](https://raw.githack.com/alonrashty/ML-Course/main/PS5/PS5.html)
 
+* [Kaggle Competition](https://raw.githack.com/alonrashty/ML-Course/main/Kaggle/Kaggle-Competition.html)
