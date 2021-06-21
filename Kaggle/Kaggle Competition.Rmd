@@ -18,7 +18,7 @@ knitr::opts_chunk$set(message=FALSE, warning = FALSE)
 
 
 # Packages & Functions
-```{r , class.source = 'fold-hide', message = FALSE}
+```{r , message = FALSE}
 if (!require("pacman")) install.packages("pacman")
   pacman::p_load(
     # For data manipulation, analysis and visualization
@@ -36,6 +36,7 @@ if (!require("pacman")) install.packages("pacman")
     vip,
     
     # Other
+    here,
     remotes,
     doParallel
     )
@@ -43,7 +44,7 @@ if (!require("pacman")) install.packages("pacman")
   pacman::p_load_gh("Sorenson-Impact/sorensonimpact")
 ```
 
-```{r, class.source = 'fold-hide'}
+```{r}
 # Function to detect binary variables
 is_binary <- function(x) {
   x0 <- na.omit(x)
@@ -62,11 +63,11 @@ kable_format <- function(x, digits = 1, caption = NULL, position = "center") {
 
 # Data
 ```{r, message=FALSE}
-train_raw <- read_csv("train.csv")
+train_raw <- read_csv(here("Kaggle","train.csv"))
 
 train <- train_raw %>% select(-ID) 
 
-test <- read_csv("test.csv") 
+test <- read_csv(here("Kaggle","test.csv"))
 ```
 
 ## First look
@@ -308,13 +309,25 @@ train_rec <- recipe(lnwage ~ ., data = train_raw %>% select(-ID)) %>%
                                      production==1 | transport==1 | constructextractinstall==1, 0, 1)
               ) %>% 
   step_normalize(edyrs, total_exp, total_expsq) %>%
-  #step_rm(starts_with("exp"), "manager", "business", "financialop", "computer", "architect", "scientist", "socialworker", "postseceduc", "legaleduc", "artist", "lawyerphysician", "healthcare", "healthsupport", "protective", "foodcare", "building", "sales", "officeadmin", "constructextractinstall", "production", "transport", northeast, northcentral, black ,hisp, otherrace) %>%
+  
+  # step_rm(starts_with("exp"), manager, business, financialop, computer, architect, scientist,
+  #         socialworker, postseceduc, legaleduc, artist, lawyerphysician, healthcare, healthsupport,
+  #         protective, foodcare, building, sales, officeadmin, constructextractinstall, production,
+  #         transport, northeast, northcentral, black ,hisp, otherrace) %>%
+  
   #step_interact(~ all_predictors():all_predictors()) %>%
-  step_zv(all_predictors()) # %>%
-  #step_corr(all_predictors(), threshold = 0.8)
+  
+  step_zv(all_predictors())
 
+# Enhancing performance
+registerDoParallel()
+```
+
+
+```{r}
 
 ```
+
 
 ## LASSO
 ```{r}
@@ -325,7 +338,7 @@ lasso_model <-
     set_mode("regression")
 
 # Define parameters for tuning
-lasso_grid <- grid_regular(penalty(), levels = 10)
+lasso_grid <- grid_regular(penalty(), levels = 50)
 
 # Combine models and workflow
 lasso_wf <- workflow() %>%
@@ -338,7 +351,7 @@ lasso_results <- lasso_wf %>%
             resamples = cv_folds,
             control = ctrl_grid)
 
-lasso_results %>% show_best(metric = "rmse") %>% select(-c(n, .config)) %>% kable_format(digits = 8)
+lasso_results %>% show_best(metric = "rmse") %>% select(-c(n, .config)) %>% kable_format(digits = 4)
 
 # Visualize results
 lasso_results %>%
@@ -367,11 +380,6 @@ lasso_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col")
 
 ```
 
-```{r, include=FALSE}
-# Enhancing performance
-cores <- parallel::detectCores(logical = FALSE)
-registerDoParallel(cores = cores)
-```
 
 ## Random Forests
 ```{r}
@@ -386,10 +394,10 @@ rf_model <-
 
 # Define parameters for tuning
 rf_grid <- grid_latin_hypercube(
-  mtry(c(1L,15L)),
-  trees(c(500L, 1800L)),
-  min_n(c(5L, 20L)),
-  size = 30
+  mtry(c(8, 20)),
+  trees(c(500, 2000)),
+  min_n(c(20, 55)),
+  size = 20
   )
 
 # Combine model and recipe
@@ -425,8 +433,6 @@ rf_results %>%
 
 # Select best model
 rf_best <- select_best(rf_results, metric = "rmse")
-# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
-# rf_1std <- select_by_one_std_err(rf_results, mtry, trees, min_n, metric = "rmse")
 
 # Finalize workflow
 rf_final <- finalize_workflow(rf_wf, rf_best)
@@ -449,20 +455,20 @@ xgb_model <-
              tree_depth = tune(),     # max number of split (complexity)
              learn_rate = tune(),     # step size
              loss_reduction = tune(), # the reduction in the loss function required to split further
-             sample_size = tune()   # fraction of data in each round (for randomness)
+             sample_size = tune()     # fraction of data in each round (for randomness)
             ) %>%
   set_mode("regression") %>%
   set_engine("xgboost", objective = "reg:squarederror")
 
 # Define parameters for tuning
 xgb_grid <- grid_latin_hypercube(
-  mtry(c(8L, 40L)),
-  trees(c(500L, 1000)),
-  min_n(c(15L, 80L)),
-  tree_depth(c(1L, 6L)),
-  learn_rate(c(-2, -1.5)),
-  loss_reduction(c(-10, -2.5)),
-  sample_size = sample_prop(c(0.6, 0.8)),
+  mtry(c(5, 20)),
+  trees(c(500, 2000)),
+  min_n(c(20, 100)),
+  tree_depth(),
+  learn_rate(c(-2.5,-1.5)),
+  loss_reduction(c(-9, 1)),
+  sample_size = sample_prop(c(0.6, 0.9)),
   size = 30
   )
 
@@ -481,7 +487,7 @@ tune_grid(xgb_wf,
           )
 
 # Evaluate tuning results
-show_best(xgb_results, "rmse", n = 5) %>% select(-c(.estimator, .config, n)) %>% kable_format(digits = 3)
+show_best(xgb_results, "rmse") %>% select(-c(.estimator, .config, n)) %>% kable_format(digits = 3)
 
 # Visualize results
 xgb_results %>%
@@ -499,9 +505,6 @@ labs(x = NULL, y = "rmse")
 
 # Select best model
 xgb_best <- select_best(xgb_results, metric = "rmse")
-# Or select by one std err (the additional arguments arrange the results by these parameters - do we want that?)
-# xgb_1std <- select_by_one_std_err(xgb_results, mtry, tree_depth, trees, min_n,
-#                       metric = "rmse")
 
 # Finalize workflow
 xgb_final <- finalize_workflow(xgb_wf, xgb_best)
@@ -510,12 +513,10 @@ xgb_final_fit <- fit(xgb_model_final, lnwage ~ ., data = train_raw)
 
 # Variable importance
 xgb_final %>% fit(data = train) %>% pull_workflow_fit() %>% vip(geom = "col")
-
-
 ```
 
 ## Stacking models
-At this stage we will combine all our models to gets the best out of them, using `{stacks}` package:
+At this stage we will combine all our models to gets the best out of them, using [`{stacks}`](https://stacks.tidymodels.org/index.html) package:
 
 > _"stacks is an R package for model stacking that aligns with the tidymodels. Model stacking is an ensembling method that takes the outputs of many models and combines them to generate a new model—referred to as an ensemble in this package—that generates predictions informed by each of its members."_
 
@@ -535,7 +536,6 @@ autoplot(stack_model, type = "members")
 autoplot(stack_model, type = "weights")
 
 stack_model <- stack_model %>% fit_members()
-
 ```
 
 # Prediction & Submission
@@ -546,6 +546,6 @@ stack_pred <-
     bind_cols(select(test, ID)) %>% 
     select(ID, lnwage)
 
-write_csv(stack_pred, "submission.csv")
+write_csv(stack_pred, here("Kaggle", "submission.csv"))
 ```
 
