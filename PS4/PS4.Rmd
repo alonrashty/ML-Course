@@ -1,0 +1,152 @@
+---
+title: 'Problem Set 4: Double LASSO'
+author: "Alon Rashty"
+date: "6/26/2021"
+output:
+  html_document: 
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+    code_folding: show
+editor_options: 
+  chunk_output_type: console
+---
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning = FALSE)
+```
+
+
+# Packages
+```{r}
+if (!require("pacman")) install.packages("pacman")
+  pacman::p_load(
+    tidyverse,
+    broom,
+    hdm,
+    stargazer,
+    kableExtra
+    )
+  
+# Function for table formatting
+kable_format <- function(x, digits = 1, caption = NULL, position = "center") {
+  kbl(x = x, digits = digits, caption = caption) %>% 
+  row_spec(row = 0,bold = TRUE) %>% 
+  kable_classic_2(lightable_options = c("bordered", "hover"), full_width = F, 
+                  html_font = "Cambria",position = position
+                  )
+} 
+```  
+  
+# Linear Model
+```{r}
+# Question 1
+data(GrowthData)
+
+# Question 2
+Y <- GrowthData %>% select(Outcome) %>% pull()
+D <- GrowthData %>%  select(gdpsh465) %>% pull()
+X <- GrowthData %>% select(-c("Outcome", "gdpsh465", "intercept")) %>% as.matrix()
+
+# Question 3
+varnames <- colnames(GrowthData)
+xnames <-  varnames[-c(1, 2, 3)] # names of X variables
+dandxnames <- varnames[-c(1, 2)] # names of D and X variables
+fmla <- as.formula(paste("Outcome ~ ", paste(dandxnames, collapse = "+")))
+
+# Question 4
+ols <- lm(data = GrowthData, formula = fmla)
+
+# Question 5
+part_lasso <- rlassoEffect(x = X, y = Y, d = D, method = "partialling out") 
+
+# Question 6
+double_lasso <- rlassoEffect(x = X, y = Y, d = D, method = "double selection") 
+
+# Question 7
+ols_tbl <- tidy(ols) %>%
+ filter(term == "gdpsh465") %>%
+ mutate(method = "OLS") %>%
+ select(method, estimate, std.error)
+
+part_lasso_res <- summary(part_lasso)[[1]][1, 1:2]
+part_lasso_tbl <- tibble(method = "Partialling-out Lasso",
+ estimate = part_lasso_res[1],
+ std.error = part_lasso_res[2])
+
+double_lasso_res <- summary(double_lasso)[[1]][1, 1:2]
+double_lasso_tbl <- tibble(method = "Double-selection Lasso",
+ estimate = double_lasso_res[1],
+ std.error = double_lasso_res[2])
+
+bind_rows(ols_tbl, part_lasso_tbl, double_lasso_tbl) %>%
+ kable_format(digits = 3)
+
+```
+
+
+# IV Model
+```{r}
+# Question 1
+data(AJR)
+
+# Question 2
+Y <- AJR %>% select(GDP) %>% pull()
+D <- AJR %>%  select(Exprop) %>% pull()
+Z <- AJR %>%  select(logMort ) %>% pull()
+
+# Question 3
+X <- model.matrix(~-1 + (Latitude + Latitude2 + Africa + Asia +
+Namer + Samer)^2, data = AJR)
+
+# Question 4
+iv_lasso <- rlassoIV(formula = 
+                       GDP ~ 
+                       Exprop  + (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2 |
+                       logMort + (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2,
+                     select.X = TRUE,
+                     select.Z = FALSE,
+                     data = AJR)
+summary(iv_lasso)
+
+# Question 5
+confint(iv_lasso)
+
+# Question 6
+rY <- lm(GDP ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+rD <- lm(Exprop ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+rZ <- lm(logMort ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+
+# Question 7
+tsls <- tsls(formula = rY ~ rD | rZ, intercept = FALSE, data =AJR)
+
+summary(tsls)
+
+# Question 8
+rY <- rlasso(GDP ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+rD <- rlasso(Exprop ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+rZ <- rlasso(logMort ~ (Latitude + Latitude2 + Africa + Asia + Namer + Samer)^2, data = AJR)$res
+
+tsls <- tsls(formula = rY ~ rD | rZ, intercept = FALSE, data =AJR)
+
+summary(tsls)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
