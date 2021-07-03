@@ -3,7 +3,7 @@
 
 * Problem Set 1: Introduction [(Questions)](https://raw.githack.com/alonrashty/ML-Course/main/PS1/prerequisite.html) [(Solution)](https://raw.githack.com/alonrashty/ML-Course/main/PS1/PS1.html)
 
-* Problem Set 2: Regression & Classification [(Questions)](https://raw.githack.com/alonrashty/ML-Course/main/PS2/regression.html) [(Solution)](Solution)](https://raw.githack.com/alonrashty/ML-Course/main/PS2/PS2.html)
+* Problem Set 2: Regression & Classification [(Questions)](https://raw.githack.com/alonrashty/ML-Course/main/PS2/regression.html) [(Solution)](https://raw.githack.com/alonrashty/ML-Course/main/PS2/PS2.html)
 
 * Problem Set 3: Non Parametric Methods [(Questions)](https://raw.githack.com/alonrashty/ML-Course/main/PS3/trees_exercise.html) [(Solution)](https://raw.githack.com/alonrashty/ML-Course/main/PS3/PS3.html)
 
