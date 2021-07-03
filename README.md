@@ -7,7 +7,7 @@
 
 * [Problem Set 3: Non Parametric Methods](https://raw.githack.com/alonrashty/ML-Course/main/PS3/PS3.html)
 
-* Problem Set 4: Double Lasso or Causal Trees &ndash; Soon
+* [Problem Set 4: Double Lasso](https://raw.githack.com/alonrashty/ML-Course/main/PS4/PS4.html)
 
 * [Problem Set 5: Text Mining](https://raw.githack.com/alonrashty/ML-Course/main/PS5/PS5.html)
 
