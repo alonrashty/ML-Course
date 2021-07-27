@@ -11,4 +11,6 @@
 
 * Problem Set 5: Text Mining [(Questions)](https://raw.githack.com/alonrashty/ML-Course/main/PS5/text_mining.html) [(Solution)](https://raw.githack.com/alonrashty/ML-Course/main/PS5/PS5.html)
 
-* Kaggle Competition [(Solution)](https://raw.githack.com/alonrashty/ML-Course/main/Kaggle/Kaggle-Competition.html)
+* Kaggle Competition [(HTML)](https://raw.githack.com/alonrashty/ML-Course/main/Kaggle/Kaggle-Competition.html)
+
+* Final Project: IV Selection with Double LASSO [(HTML)](https://raw.githack.com/alonrashty/ML-Course/main/Final Project/FinalProject.html)
