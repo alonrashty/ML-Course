@@ -13,4 +13,4 @@
 
 * Kaggle Competition [(HTML)](https://raw.githack.com/alonrashty/ML-Course/main/Kaggle/Kaggle-Competition.html)
 
-* Final Project: IV Selection with Double LASSO [(HTML)](https://raw.githack.com/alonrashty/ML-Course/main/Final Project/FinalProject.html)
+* Final Project: IV Selection with Double LASSO [(HTML)](https://raw.githack.com/alonrashty/ML-Course/main/Final%20Project/FinalProject.html)
