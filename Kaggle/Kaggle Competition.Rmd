@@ -323,12 +323,6 @@ train_rec <- recipe(lnwage ~ ., data = train_raw %>% select(-ID)) %>%
 registerDoParallel()
 ```
 
-
-```{r}
-
-```
-
-
 ## LASSO
 ```{r}
 # Model definition
